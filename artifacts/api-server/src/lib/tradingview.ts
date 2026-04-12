@@ -169,17 +169,23 @@ export class TradingViewFeed extends EventEmitter {
       const content = msg.content;
       if (!content) continue;
 
+      const msgType = content["m"] as string | undefined;
+      logger.info({ msgType, hasSessionId: content["session_id"] !== undefined }, "TV raw msg");
+
       if (content["session_id"] !== undefined && !this.sessionSetup) {
         this.sessionSetup = true;
         this.setupQuoteSession();
         continue;
       }
 
-      const msgType = content["m"];
       if (msgType === "qsd") {
         this.handleQuoteData(content);
+      } else if (msgType === "critical_error" || msgType === "protocol_error") {
+        logger.error({ msgType, content: JSON.stringify(content).slice(0, 300) }, "TV protocol error");
+      } else if (msgType === "quote_completed") {
+        logger.info({ content: JSON.stringify(content).slice(0, 200) }, "TV quote_completed");
       } else if (msgType) {
-        logger.debug({ msgType }, "TV message");
+        logger.info({ msgType, p: JSON.stringify(content["p"]).slice(0, 200) }, "TV unhandled msg");
       }
     }
   }
@@ -207,13 +213,7 @@ export class TradingViewFeed extends EventEmitter {
     );
 
     for (const symbol of this.symbols) {
-      this.send(
-        createMessage("quote_add_symbols", [
-          this.quoteSession,
-          symbol,
-          { flags: ["force_permission"] },
-        ])
-      );
+      this.send(createMessage("quote_add_symbols", [this.quoteSession, symbol]));
     }
 
     this.emit("status", { connected: true, authenticated: true });

@@ -3,15 +3,14 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-const TV_BASE = "https://www.tradingview.com";
-const TV_SIGNIN_URL = `${TV_BASE}/accounts/signin/`;
-const TV_2FA_URL = `${TV_BASE}/accounts/two-factor/sign-in/totp/`;
+const TV_SIGNIN_URL = "https://www.tradingview.com/accounts/signin/";
+const TV_2FA_URL = "https://www.tradingview.com/accounts/two-factor/signin/totp/";
 
 const BASE_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  Origin: TV_BASE,
-  Referer: `${TV_BASE}/`,
+  Origin: "https://www.tradingview.com",
+  Referer: "https://www.tradingview.com/",
   Accept: "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
 };
@@ -41,10 +40,7 @@ function mergeCookies(existing: Map<string, string>, incoming: string[]): Map<st
   return merged;
 }
 
-const pendingAuth = new Map<
-  string,
-  { cookies: Map<string, string>; createdAt: number }
->();
+const pendingAuth = new Map<string, { cookies: Map<string, string>; createdAt: number }>();
 
 setInterval(() => {
   const now = Date.now();
@@ -53,13 +49,14 @@ setInterval(() => {
   }
 }, 60_000);
 
-async function getInitialCookies(): Promise<Map<string, string>> {
-  const res = await fetch(`${TV_BASE}/`, {
-    headers: BASE_HEADERS,
-    redirect: "manual",
-  });
-  const rawCookies = res.headers.getSetCookie?.() ?? [];
-  return parseCookies(rawCookies);
+async function safeJson(res: Response): Promise<Record<string, unknown>> {
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    return res.json() as Promise<Record<string, unknown>>;
+  }
+  const text = await res.text();
+  logger.warn({ status: res.status, preview: text.slice(0, 200) }, "Non-JSON response from TradingView");
+  return {};
 }
 
 router.post("/auth/tradingview/login", async (req, res) => {
@@ -71,68 +68,44 @@ router.post("/auth/tradingview/login", async (req, res) => {
   }
 
   try {
-    // Step 1: fetch homepage to get csrftoken
-    const initialCookies = await getInitialCookies();
-    const csrfToken = initialCookies.get("csrftoken") ?? "";
-
-    logger.info({ csrfToken: csrfToken ? "[present]" : "[missing]" }, "TV CSRF preflight");
-
-    // Step 2: sign in
     const body = new URLSearchParams({ username, password, remember: "on" });
 
     const tvRes = await fetch(TV_SIGNIN_URL, {
       method: "POST",
-      headers: {
-        ...BASE_HEADERS,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: serializeCookies(initialCookies),
-        "X-CSRFToken": csrfToken,
-      },
+      headers: { ...BASE_HEADERS, "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
       redirect: "manual",
     });
 
     const rawCookies = tvRes.headers.getSetCookie?.() ?? [];
-    const sessionCookies = mergeCookies(initialCookies, rawCookies);
+    const cookies = parseCookies(rawCookies);
+    const data = await safeJson(tvRes);
 
-    let data: Record<string, unknown> = {};
-    const contentType = tvRes.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      data = await tvRes.json() as Record<string, unknown>;
-    } else {
-      const text = await tvRes.text();
-      logger.warn({ status: tvRes.status, text: text.slice(0, 300) }, "TV signin non-JSON response");
-    }
-
-    logger.info({ status: tvRes.status, hasUser: !!data.user, error: data.error }, "TV signin response");
+    logger.info({ status: tvRes.status, hasUser: !!data.user, error: data.error, code: data.code }, "TV signin");
 
     if (data.user) {
-      const sessionId = sessionCookies.get("sessionid") ?? null;
+      const sessionId = cookies.get("sessionid") ?? null;
+      if (!sessionId) {
+        res.status(500).json({ error: "Authenticated but no session cookie returned" });
+        return;
+      }
       res.json({ success: true, sessionId });
       return;
     }
 
-    const errMsg = String(data.error ?? "").toLowerCase();
-    const needs2FA =
-      errMsg.includes("2fa") ||
-      errMsg.includes("two_factor") ||
-      errMsg.includes("two-factor") ||
-      errMsg.includes("totp") ||
-      errMsg === "2fa required" ||
-      tvRes.status === 400 && !!sessionCookies.get("csrftoken");
+    const code = String(data.code ?? data.error ?? "").toLowerCase();
+    const needs2FA = code.includes("2fa") || code.includes("two_factor") || code.includes("two-factor") || code.includes("totp");
 
     if (needs2FA) {
       const tempKey = `tv_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      pendingAuth.set(tempKey, { cookies: sessionCookies, createdAt: Date.now() });
-      logger.info({ tempKey, cookieKeys: [...sessionCookies.keys()] }, "Stored pending 2FA session");
+      pendingAuth.set(tempKey, { cookies, createdAt: Date.now() });
+      logger.info({ tempKey, cookieKeys: [...cookies.keys()] }, "2FA pending");
       res.json({ success: false, needs2FA: true, tempKey });
       return;
     }
 
-    res.status(401).json({
-      error: String(data.error ?? "Login failed. Check your credentials."),
-      needs2FA: false,
-    });
+    const errMsg = String(data.error ?? data.code ?? "Login failed. Check your credentials.");
+    res.status(401).json({ error: errMsg, needs2FA: false });
   } catch (err) {
     logger.error({ err }, "TradingView login error");
     res.status(500).json({ error: "Failed to connect to TradingView" });
@@ -149,28 +122,23 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
 
   const pending = pendingAuth.get(tempKey);
   if (!pending) {
-    res.status(400).json({ error: "Session expired or invalid. Please log in again." });
+    res.status(400).json({ error: "Session expired. Please log in again." });
     return;
   }
 
   try {
-    const csrfToken = pending.cookies.get("csrftoken") ?? "";
     const cookieStr = serializeCookies(pending.cookies);
-
-    logger.info(
-      { cookieKeys: [...pending.cookies.keys()], csrfToken: csrfToken ? "[present]" : "[missing]" },
-      "TV 2FA attempt"
-    );
-
     const body = new URLSearchParams({ code: code.trim().replace(/\s/g, "") });
+
+    logger.info({ cookieKeys: [...pending.cookies.keys()], url: TV_2FA_URL }, "TV 2FA POST");
 
     const tvRes = await fetch(TV_2FA_URL, {
       method: "POST",
       headers: {
         ...BASE_HEADERS,
         "Content-Type": "application/x-www-form-urlencoded",
+        Referer: "https://www.tradingview.com/accounts/two-factor/signin/totp/",
         Cookie: cookieStr,
-        "X-CSRFToken": csrfToken,
       },
       body: body.toString(),
       redirect: "manual",
@@ -178,23 +146,17 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
 
     const rawCookies = tvRes.headers.getSetCookie?.() ?? [];
     const finalCookies = mergeCookies(pending.cookies, rawCookies);
+    const data = await safeJson(tvRes);
 
-    let data: Record<string, unknown> = {};
-    const contentType = tvRes.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      data = await tvRes.json() as Record<string, unknown>;
-    } else {
-      const text = await tvRes.text();
-      logger.warn({ status: tvRes.status, text: text.slice(0, 300) }, "TV 2FA non-JSON response");
-    }
-
-    logger.info({ status: tvRes.status, hasUser: !!data.user, error: data.error }, "TV 2FA response");
+    logger.info(
+      { status: tvRes.status, hasUser: !!data.user, code: data.code, error: data.error, newCookieKeys: [...parseCookies(rawCookies).keys()] },
+      "TV 2FA response"
+    );
 
     if (data.user || tvRes.status === 200) {
       const sessionId = finalCookies.get("sessionid") ?? null;
       if (!sessionId) {
-        logger.warn({ cookieKeys: [...finalCookies.keys()] }, "2FA succeeded but no sessionid found");
-        res.status(500).json({ error: "Authenticated but could not extract session. Try pasting the session token manually." });
+        res.status(500).json({ error: "2FA succeeded but no session cookie found. Try logging in with a manual session token." });
         return;
       }
       pendingAuth.delete(tempKey);
@@ -202,8 +164,18 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
       return;
     }
 
-    const errMsg = String(data.error ?? "");
-    res.status(401).json({ error: errMsg || "2FA verification failed. Check your code and try again." });
+    if (tvRes.status === 403) {
+      const detail = String(data.detail ?? data.error ?? "");
+      if (detail.toLowerCase().includes("expired")) {
+        pendingAuth.delete(tempKey);
+        res.status(401).json({ error: "Login session expired — please sign in again." });
+        return;
+      }
+    }
+
+    res.status(401).json({
+      error: String(data.detail ?? data.error ?? data.code ?? "2FA verification failed. Check your code."),
+    });
   } catch (err) {
     logger.error({ err }, "TradingView 2FA error");
     res.status(500).json({ error: "Failed to verify 2FA code" });

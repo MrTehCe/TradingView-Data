@@ -73,7 +73,14 @@ export function SettingsPanel({
         setOpen(false);
         resetForm();
       } else {
-        setError(data.error ?? 'Invalid code. Try again.');
+        const msg = data.error ?? 'Invalid code. Try again.';
+        if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('sign in again')) {
+          setStep('credentials');
+          setCode('');
+          setError('Login session expired — please enter your credentials again.');
+        } else {
+          setError(msg);
+        }
       }
     } catch {
       setError('Network error — could not verify code.');

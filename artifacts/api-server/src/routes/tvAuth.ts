@@ -60,18 +60,39 @@ async function safeJson(res: Response): Promise<Record<string, unknown>> {
 }
 
 async function getJwtToken(cookies: Map<string, string>): Promise<string | null> {
+  const cookieStr = serializeCookies(cookies);
+
+  // Approach: fetch the TV homepage with session cookies — the server renders
+  // window.initData with auth_token for authenticated users.
   try {
-    const cookieStr = serializeCookies(cookies);
-    const res = await fetch("https://www.tradingview.com/auth/get_token/", {
-      headers: { ...BASE_HEADERS, Cookie: cookieStr },
-      redirect: "manual",
+    const res = await fetch("https://www.tradingview.com/", {
+      headers: {
+        ...BASE_HEADERS,
+        Cookie: cookieStr,
+        "Cache-Control": "no-cache",
+      },
     });
-    const data = await safeJson(res);
-    const token = data.token as string | undefined;
-    logger.info({ hasToken: !!token, status: res.status }, "TV JWT exchange");
-    return token ?? null;
+    const html = await res.text();
+
+    // Several regex patterns TV has used over the years
+    const patterns = [
+      /"auth_token"\s*:\s*"(eyJ[^"]+)"/,
+      /auth_token['":\s]+["']?(eyJ[^"'\s]+)/,
+      /"token"\s*:\s*"(eyJ[^"]+)"/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match?.[1]) {
+        logger.info({ tokenPrefix: match[1].slice(0, 20) }, "TV auth_token extracted from page");
+        return match[1];
+      }
+    }
+
+    logger.warn({ status: res.status, htmlLen: html.length }, "auth_token not found in TV homepage");
+    return null;
   } catch (err) {
-    logger.error({ err }, "TV JWT exchange failed");
+    logger.error({ err }, "TV JWT extraction failed");
     return null;
   }
 }
@@ -101,12 +122,10 @@ router.post("/auth/tradingview/login", async (req, res) => {
     logger.info({ status: tvRes.status, hasUser: !!data.user, error: data.error, code: data.code }, "TV signin");
 
     if (data.user) {
+      const cookieStr = serializeCookies(cookies);
       const jwtToken = await getJwtToken(cookies);
-      if (!jwtToken) {
-        res.status(500).json({ error: "Authenticated but could not obtain auth token" });
-        return;
-      }
-      res.json({ success: true, sessionId: jwtToken, cookieStr: serializeCookies(cookies) });
+      // jwtToken may be null if TV page doesn't embed it; cookieStr auth is the fallback
+      res.json({ success: true, sessionId: jwtToken ?? "unauthorized_user_token", cookieStr });
       return;
     }
 
@@ -172,16 +191,14 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
 
     if (data.user || tvRes.status === 200) {
       if (!finalCookies.get("sessionid")) {
-        res.status(500).json({ error: "2FA succeeded but no session cookie found. Try logging in with a manual session token." });
+        res.status(500).json({ error: "2FA succeeded but no session cookie found. Try the manual token option." });
         return;
       }
+      const cookieStr = serializeCookies(finalCookies);
       const jwtToken = await getJwtToken(finalCookies);
-      if (!jwtToken) {
-        res.status(500).json({ error: "Authenticated but could not obtain auth token. Try using a manual session token." });
-        return;
-      }
+      // Fall back to cookie-header auth if JWT extraction fails
       pendingAuth.delete(tempKey);
-      res.json({ success: true, sessionId: jwtToken, cookieStr: serializeCookies(finalCookies) });
+      res.json({ success: true, sessionId: jwtToken ?? "unauthorized_user_token", cookieStr });
       return;
     }
 

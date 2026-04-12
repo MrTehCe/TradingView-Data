@@ -85,6 +85,7 @@ export class TradingViewFeed extends EventEmitter {
   private authToken: string;
   private cookieStr: string;
   private sessionSetup = false;
+  private quoteSnapshot: Map<string, QuoteData> = new Map();
 
   constructor(symbols: string[], authToken = "unauthorized_user_token", cookieStr = "") {
     super();
@@ -225,33 +226,43 @@ export class TradingViewFeed extends EventEmitter {
   private handleQuoteData(content: Record<string, unknown>) {
     const params = content["p"] as [
       string,
-      { n: string; s: string; v: Record<string, number> },
+      { n: string; s: string; v: Record<string, number | string> },
     ];
     if (!params || params.length < 2) return;
 
     const payload = params[1];
-    logger.info({ symbol: payload?.n, status: payload?.s, hasV: !!payload?.v }, "TV quote update");
-    if (!payload || payload.s !== "ok" || !payload.v) return;
+    if (!payload?.n) return;
 
-    const v = payload.v;
     const symbolKey = payload.n;
+    const v = payload.v ?? {};
 
-    const quote: QuoteData = {
+    // Merge incoming fields with the last-known snapshot for this symbol
+    const prev = this.quoteSnapshot.get(symbolKey);
+    const merged: QuoteData = {
       symbol: symbolKey,
       displaySymbol: SYMBOL_DISPLAY[symbolKey] ?? symbolKey,
-      price: v["lp"] ?? null,
-      change: v["ch"] ?? null,
-      changePct: v["chp"] ?? null,
-      volume: v["volume"] ?? null,
-      high: v["high_price"] ?? null,
-      low: v["low_price"] ?? null,
-      open: v["open_price"] ?? null,
-      prevClose: v["prev_close_price"] ?? null,
-      timestamp: v["lp_time"] ? v["lp_time"] * 1000 : null,
-      session: (v["current_session"] as unknown as string) ?? null,
+      price: (v["lp"] as number | undefined) ?? prev?.price ?? null,
+      change: (v["ch"] as number | undefined) ?? prev?.change ?? null,
+      changePct: (v["chp"] as number | undefined) ?? prev?.changePct ?? null,
+      volume: (v["volume"] as number | undefined) ?? prev?.volume ?? null,
+      high: (v["high_price"] as number | undefined) ?? prev?.high ?? null,
+      low: (v["low_price"] as number | undefined) ?? prev?.low ?? null,
+      open: (v["open_price"] as number | undefined) ?? prev?.open ?? null,
+      prevClose: (v["prev_close_price"] as number | undefined) ?? prev?.prevClose ?? null,
+      timestamp: v["lp_time"] ? (v["lp_time"] as number) * 1000 : prev?.timestamp ?? null,
+      session: (v["current_session"] as string | undefined) ?? prev?.session ?? null,
     };
 
-    this.emit("quote", quote);
+    this.quoteSnapshot.set(symbolKey, merged);
+
+    // Only emit if we have at least a price
+    if (merged.price !== null) {
+      logger.info(
+        { symbol: symbolKey, status: payload.s, price: merged.price },
+        "TV quote update"
+      );
+      this.emit("quote", merged);
+    }
   }
 
   private send(msg: string) {

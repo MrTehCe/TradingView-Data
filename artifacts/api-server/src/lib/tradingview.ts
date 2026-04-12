@@ -170,7 +170,6 @@ export class TradingViewFeed extends EventEmitter {
       if (!content) continue;
 
       const msgType = content["m"] as string | undefined;
-      logger.info({ msgType, hasSessionId: content["session_id"] !== undefined }, "TV raw msg");
 
       if (content["session_id"] !== undefined && !this.sessionSetup) {
         this.sessionSetup = true;
@@ -182,10 +181,6 @@ export class TradingViewFeed extends EventEmitter {
         this.handleQuoteData(content);
       } else if (msgType === "critical_error" || msgType === "protocol_error") {
         logger.error({ msgType, content: JSON.stringify(content).slice(0, 300) }, "TV protocol error");
-      } else if (msgType === "quote_completed") {
-        logger.info({ content: JSON.stringify(content).slice(0, 200) }, "TV quote_completed");
-      } else if (msgType) {
-        logger.info({ msgType, p: JSON.stringify(content["p"]).slice(0, 200) }, "TV unhandled msg");
       }
     }
   }

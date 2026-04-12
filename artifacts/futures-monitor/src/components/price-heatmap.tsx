@@ -11,7 +11,9 @@ const WINDOWS = {
 
 type WindowKey = keyof typeof WINDOWS;
 
-const ROWS = 50;
+const DEFAULT_ROWS = 50;
+const MIN_ROWS = 10;
+const MAX_ROWS = 160;
 const LABEL_W = 58;
 const BUBBLE_W = 48;
 const TIME_LABEL_H = 20;
@@ -25,13 +27,42 @@ interface Props {
 
 export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef }: Props) {
   const [win, setWin] = useState<WindowKey>('5m');
+  const [visibleRows, setVisibleRows] = useState(DEFAULT_ROWS);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
   const winRef = useRef(win);
   winRef.current = win;
   const priceRef = useRef(currentPrice);
   priceRef.current = currentPrice;
+  const rowsRef = useRef(visibleRows);
+  rowsRef.current = visibleRows;
 
+  // ── Scroll-wheel zoom ───────────────────────────────────────────────────────
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const step = Math.max(1, Math.round(rowsRef.current * 0.1));
+      setVisibleRows((prev) =>
+        Math.max(MIN_ROWS, Math.min(MAX_ROWS, prev + (e.deltaY > 0 ? step : -step)))
+      );
+    };
+
+    const onDblClick = () => setVisibleRows(DEFAULT_ROWS);
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('dblclick', onDblClick);
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('dblclick', onDblClick);
+    };
+  }, []);
+
+  // ── Canvas draw loop ────────────────────────────────────────────────────────
   useEffect(() => {
     const draw = () => {
       const canvas = canvasRef.current;
@@ -52,6 +83,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
       canvas.style.height = `${displayH}px`;
       ctx.scale(dpr, dpr);
 
+      const ROWS = rowsRef.current;
       const currentWin = winRef.current;
       const price = priceRef.current;
       const { duration, cols } = WINDOWS[currentWin];
@@ -94,7 +126,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
 
       const maxCount = Math.max(1, ...counts.flat());
 
-      // ── Heatmap cells (green palette) ──────────────────────────────────────
+      // ── Heatmap cells ─────────────────────────────────────────────────────
       for (let row = 0; row < ROWS; row++) {
         const displayRow = ROWS - 1 - row;
         const y = displayRow * cellH;
@@ -117,17 +149,18 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
           ctx.fillRect(x + 0.5, y + 0.5, cellW - 1, cellH - 1);
         }
 
-        // price labels (every 5 rows)
-        if (row % 5 === 0) {
+        // Price labels every ~5 rows, scaled with zoom
+        const labelEvery = Math.max(1, Math.round(ROWS / 10));
+        if (row % labelEvery === 0) {
           const labelPrice = rowPrice.toFixed(bucketSize < 1 ? 2 : 0);
           ctx.fillStyle = '#444';
-          ctx.font = `${Math.max(8, Math.min(10, cellH * 0.75))}px monospace`;
+          ctx.font = `${Math.max(7, Math.min(10, cellH * 0.7))}px monospace`;
           ctx.textAlign = 'right';
           ctx.fillText(labelPrice, LABEL_W - 4, y + cellH * 0.72);
         }
       }
 
-      // ── Bubble layer (volume profile on right) ─────────────────────────────
+      // ── Bubble layer ──────────────────────────────────────────────────────
       const rowTotals = counts.map((rowCols) => rowCols.reduce((s, c) => s + c, 0));
       const maxRowTotal = Math.max(1, ...rowTotals);
       const maxBubbleR = Math.min(BUBBLE_W / 2 - 2, cellH * 1.4);
@@ -142,9 +175,9 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
         const cy = displayRow * cellH + cellH / 2;
 
         const alpha = 0.25 + 0.65 * t;
-        const gr = Math.round(40 + 60 * t);
+        const gr = Math.round(40  + 60  * t);
         const gg = Math.round(140 + 115 * t);
-        const gb = Math.round(80 + 80 * t);
+        const gb = Math.round(80  + 80  * t);
 
         ctx.beginPath();
         ctx.arc(bubbleCx, cy, r, 0, Math.PI * 2);
@@ -152,7 +185,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
         ctx.fill();
       }
 
-      // ── Current price highlight ────────────────────────────────────────────
+      // ── Current price highlight ───────────────────────────────────────────
       if (price !== null) {
         const row = Math.floor((price - priceMin) / bucketSize);
         if (row >= 0 && row < ROWS) {
@@ -165,13 +198,13 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
 
           const labelPrice = price.toFixed(bucketSize < 1 ? 2 : 0);
           ctx.fillStyle = '#00e676';
-          ctx.font = `bold ${Math.max(8, Math.min(10, cellH * 0.75))}px monospace`;
+          ctx.font = `bold ${Math.max(7, Math.min(10, cellH * 0.7))}px monospace`;
           ctx.textAlign = 'right';
           ctx.fillText(labelPrice, LABEL_W - 4, y + cellH * 0.72);
         }
       }
 
-      // ── Time axis ──────────────────────────────────────────────────────────
+      // ── Time axis ─────────────────────────────────────────────────────────
       ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, gridH, displayW, TIME_LABEL_H);
 
@@ -191,6 +224,14 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
         const x = LABEL_W + col * cellW;
         ctx.fillText(label, x, gridH + TIME_LABEL_H * 0.7);
       }
+
+      // ── Zoom indicator (bottom-right of grid) ─────────────────────────────
+      const zoomPct = Math.round((DEFAULT_ROWS / ROWS) * 100);
+      const zoomLabel = `${zoomPct}%`;
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = ROWS !== DEFAULT_ROWS ? '#666' : '#2a2a2a';
+      ctx.fillText(zoomLabel, LABEL_W + gridW - 4, gridH - 4);
     };
 
     draw();
@@ -216,8 +257,14 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
             {k}
           </button>
         ))}
+        <span className="ml-auto text-[10px] text-muted-foreground/40 font-mono">
+          scroll to zoom · dbl-click reset
+        </span>
       </div>
-      <div ref={containerRef} className="flex-1 min-h-0 rounded-lg overflow-hidden border border-[#1c1c1c]">
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 rounded-lg overflow-hidden border border-[#1c1c1c] cursor-crosshair"
+      >
         <canvas ref={canvasRef} className="w-full h-full block" />
       </div>
     </div>

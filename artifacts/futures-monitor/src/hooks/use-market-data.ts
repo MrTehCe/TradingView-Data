@@ -39,9 +39,9 @@ export function useMarketData() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
-  const sendToken = useCallback((token: string) => {
+  const sendToken = useCallback((token: string, cookieStr = '') => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'set_auth_token', token }));
+      wsRef.current.send(JSON.stringify({ type: 'set_auth_token', token, cookieStr }));
     }
   }, []);
 

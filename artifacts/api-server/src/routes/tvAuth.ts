@@ -59,6 +59,23 @@ async function safeJson(res: Response): Promise<Record<string, unknown>> {
   return {};
 }
 
+async function getJwtToken(cookies: Map<string, string>): Promise<string | null> {
+  try {
+    const cookieStr = serializeCookies(cookies);
+    const res = await fetch("https://www.tradingview.com/auth/get_token/", {
+      headers: { ...BASE_HEADERS, Cookie: cookieStr },
+      redirect: "manual",
+    });
+    const data = await safeJson(res);
+    const token = data.token as string | undefined;
+    logger.info({ hasToken: !!token, status: res.status }, "TV JWT exchange");
+    return token ?? null;
+  } catch (err) {
+    logger.error({ err }, "TV JWT exchange failed");
+    return null;
+  }
+}
+
 router.post("/auth/tradingview/login", async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
 
@@ -84,12 +101,12 @@ router.post("/auth/tradingview/login", async (req, res) => {
     logger.info({ status: tvRes.status, hasUser: !!data.user, error: data.error, code: data.code }, "TV signin");
 
     if (data.user) {
-      const sessionId = cookies.get("sessionid") ?? null;
-      if (!sessionId) {
-        res.status(500).json({ error: "Authenticated but no session cookie returned" });
+      const jwtToken = await getJwtToken(cookies);
+      if (!jwtToken) {
+        res.status(500).json({ error: "Authenticated but could not obtain auth token" });
         return;
       }
-      res.json({ success: true, sessionId });
+      res.json({ success: true, sessionId: jwtToken, cookieStr: serializeCookies(cookies) });
       return;
     }
 
@@ -154,13 +171,17 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
     );
 
     if (data.user || tvRes.status === 200) {
-      const sessionId = finalCookies.get("sessionid") ?? null;
-      if (!sessionId) {
+      if (!finalCookies.get("sessionid")) {
         res.status(500).json({ error: "2FA succeeded but no session cookie found. Try logging in with a manual session token." });
         return;
       }
+      const jwtToken = await getJwtToken(finalCookies);
+      if (!jwtToken) {
+        res.status(500).json({ error: "Authenticated but could not obtain auth token. Try using a manual session token." });
+        return;
+      }
       pendingAuth.delete(tempKey);
-      res.json({ success: true, sessionId });
+      res.json({ success: true, sessionId: jwtToken, cookieStr: serializeCookies(finalCookies) });
       return;
     }
 

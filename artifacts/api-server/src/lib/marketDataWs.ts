@@ -61,10 +61,10 @@ export function attachMarketDataWs(server: Server) {
 
     ws.on("message", (raw) => {
       try {
-        const msg = JSON.parse(raw.toString()) as { type: string; token?: string };
+        const msg = JSON.parse(raw.toString()) as { type: string; token?: string; cookieStr?: string };
         if (msg.type === "set_auth_token" && msg.token) {
           logger.info("TradingView session token received, connecting...");
-          feed.setAuthToken(msg.token);
+          feed.setAuth(msg.token, msg.cookieStr ?? "");
           feed.connect();
         }
       } catch {

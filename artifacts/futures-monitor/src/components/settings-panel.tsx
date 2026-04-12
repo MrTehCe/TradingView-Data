@@ -19,7 +19,7 @@ export function SettingsPanel({
   sendToken,
 }: {
   status: MarketStatus;
-  sendToken: (token: string) => void;
+  sendToken: (token: string, cookieStr?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<LoginStep>('credentials');
@@ -40,9 +40,9 @@ export function SettingsPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      const data = await res.json() as { success?: boolean; needs2FA?: boolean; tempKey?: string; sessionId?: string; error?: string };
+      const data = await res.json() as { success?: boolean; needs2FA?: boolean; tempKey?: string; sessionId?: string; cookieStr?: string; error?: string };
       if (data.success && data.sessionId) {
-        sendToken(data.sessionId);
+        sendToken(data.sessionId, data.cookieStr ?? '');
         setOpen(false);
         resetForm();
       } else if (data.needs2FA && data.tempKey) {
@@ -67,9 +67,9 @@ export function SettingsPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code, tempKey }),
       });
-      const data = await res.json() as { success?: boolean; sessionId?: string; error?: string };
+      const data = await res.json() as { success?: boolean; sessionId?: string; cookieStr?: string; error?: string };
       if (data.success && data.sessionId) {
-        sendToken(data.sessionId);
+        sendToken(data.sessionId, data.cookieStr ?? '');
         setOpen(false);
         resetForm();
       } else {

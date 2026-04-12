@@ -83,20 +83,28 @@ export class TradingViewFeed extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 5000;
   private authToken: string;
+  private cookieStr: string;
   private sessionSetup = false;
 
-  constructor(symbols: string[], authToken = "unauthorized_user_token") {
+  constructor(symbols: string[], authToken = "unauthorized_user_token", cookieStr = "") {
     super();
     this.symbols = symbols;
     this.quoteSession = generateSessionId("qs_");
     this.authToken = authToken;
+    this.cookieStr = cookieStr;
   }
 
-  setAuthToken(token: string) {
+  setAuth(token: string, cookieStr = "") {
     this.authToken = token;
+    this.cookieStr = cookieStr;
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.close();
     }
+  }
+
+  // keep backward compat
+  setAuthToken(token: string) {
+    this.setAuth(token);
   }
 
   connect() {
@@ -107,12 +115,17 @@ export class TradingViewFeed extends EventEmitter {
 
     logger.info({ url: TV_WS_URL }, "Connecting to TradingView");
 
+    const wsHeaders: Record<string, string> = {
+      Origin: "https://www.tradingview.com",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    };
+    if (this.cookieStr) {
+      wsHeaders["Cookie"] = this.cookieStr;
+    }
+
     this.ws = new WebSocket(TV_WS_URL, {
-      headers: {
-        Origin: "https://www.tradingview.com",
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      },
+      headers: wsHeaders,
     });
 
     this.ws.on("open", () => {

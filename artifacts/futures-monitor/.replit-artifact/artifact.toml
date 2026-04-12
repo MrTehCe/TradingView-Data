@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "MES/MNQ Futures Monitor"
+version = "1.0.0"
+id = "artifacts/futures-monitor"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19241
+
+[services.development]
+run = "pnpm --filter @workspace/futures-monitor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/futures-monitor", "run", "build" ]
+publicDir = "artifacts/futures-monitor/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19241"
+BASE_PATH = "/"

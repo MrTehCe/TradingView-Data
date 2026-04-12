@@ -3,8 +3,9 @@ import { TickRecord } from '@/hooks/use-market-data';
 import { cn } from '@/lib/utils';
 
 const WINDOWS = {
-  '1m': { duration: 60_000, cols: 30 },
-  '5m': { duration: 300_000, cols: 30 },
+  '1m':  { duration:  60_000, cols: 30 },
+  '3m':  { duration: 180_000, cols: 30 },
+  '5m':  { duration: 300_000, cols: 30 },
   '15m': { duration: 900_000, cols: 30 },
 } as const;
 
@@ -12,6 +13,7 @@ type WindowKey = keyof typeof WINDOWS;
 
 const ROWS = 50;
 const LABEL_W = 58;
+const BUBBLE_W = 48;
 const TIME_LABEL_H = 20;
 
 interface Props {
@@ -55,7 +57,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
       const { duration, cols } = WINDOWS[currentWin];
       const ticks = tickHistoryRef.current[symbol] ?? [];
 
-      const gridW = displayW - LABEL_W;
+      const gridW = displayW - LABEL_W - BUBBLE_W;
       const gridH = displayH - TIME_LABEL_H;
       const cellW = gridW / cols;
       const cellH = gridH / ROWS;
@@ -92,6 +94,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
 
       const maxCount = Math.max(1, ...counts.flat());
 
+      // ── Heatmap cells (green palette) ──────────────────────────────────────
       for (let row = 0; row < ROWS; row++) {
         const displayRow = ROWS - 1 - row;
         const y = displayRow * cellH;
@@ -103,9 +106,9 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
 
           if (count > 0) {
             const t = count / maxCount;
-            const r = Math.round(255 * Math.min(1, t * 1.8));
-            const g = Math.round(180 * Math.pow(t, 0.6));
-            const b = Math.round(20 * t);
+            const r = Math.round(20  + 80  * t);
+            const g = Math.round(120 + 135 * t);
+            const b = Math.round(50  + 70  * t);
             const a = 0.15 + 0.85 * t;
             ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
           } else {
@@ -114,6 +117,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
           ctx.fillRect(x + 0.5, y + 0.5, cellW - 1, cellH - 1);
         }
 
+        // price labels (every 5 rows)
         if (row % 5 === 0) {
           const labelPrice = rowPrice.toFixed(bucketSize < 1 ? 2 : 0);
           ctx.fillStyle = '#444';
@@ -123,11 +127,38 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
         }
       }
 
+      // ── Bubble layer (volume profile on right) ─────────────────────────────
+      const rowTotals = counts.map((rowCols) => rowCols.reduce((s, c) => s + c, 0));
+      const maxRowTotal = Math.max(1, ...rowTotals);
+      const maxBubbleR = Math.min(BUBBLE_W / 2 - 2, cellH * 1.4);
+      const bubbleCx = LABEL_W + gridW + BUBBLE_W / 2;
+
+      for (let row = 0; row < ROWS; row++) {
+        const total = rowTotals[row];
+        if (total === 0) continue;
+        const t = total / maxRowTotal;
+        const r = Math.max(1.5, maxBubbleR * Math.sqrt(t));
+        const displayRow = ROWS - 1 - row;
+        const cy = displayRow * cellH + cellH / 2;
+
+        const alpha = 0.25 + 0.65 * t;
+        const gr = Math.round(40 + 60 * t);
+        const gg = Math.round(140 + 115 * t);
+        const gb = Math.round(80 + 80 * t);
+
+        ctx.beginPath();
+        ctx.arc(bubbleCx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${gr},${gg},${gb},${alpha})`;
+        ctx.fill();
+      }
+
+      // ── Current price highlight ────────────────────────────────────────────
       if (price !== null) {
         const row = Math.floor((price - priceMin) / bucketSize);
         if (row >= 0 && row < ROWS) {
           const displayRow = ROWS - 1 - row;
           const y = displayRow * cellH;
+
           ctx.strokeStyle = '#00e676';
           ctx.lineWidth = 1.5;
           ctx.strokeRect(LABEL_W + 0.75, y + 0.75, gridW - 1.5, cellH - 1.5);
@@ -140,7 +171,8 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef 
         }
       }
 
-      ctx.fillStyle = '#2a2a2a';
+      // ── Time axis ──────────────────────────────────────────────────────────
+      ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, gridH, displayW, TIME_LABEL_H);
 
       ctx.fillStyle = '#444';

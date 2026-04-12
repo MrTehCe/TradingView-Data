@@ -55,12 +55,12 @@ export function ContractPanel({
   }
 
   const isPositive = (data.change ?? 0) >= 0;
-  const colorClass = isPositive ? 'text-green-500' : 'text-red-500';
+  const colorClass = isPositive ? 'text-green-400' : 'text-purple-400';
   const flashBg =
     flash === 'up'
       ? 'bg-green-500/10'
       : flash === 'down'
-      ? 'bg-red-500/10'
+      ? 'bg-purple-500/10'
       : '';
 
   return (
@@ -108,10 +108,10 @@ export function ContractPanel({
           O <span className="text-white/80">{data.open?.toFixed(2) ?? '-'}</span>
         </span>
         <span className="text-muted-foreground">
-          H <span className="text-green-500/80">{data.high?.toFixed(2) ?? '-'}</span>
+          H <span className="text-green-400/80">{data.high?.toFixed(2) ?? '-'}</span>
         </span>
         <span className="text-muted-foreground">
-          L <span className="text-red-500/80">{data.low?.toFixed(2) ?? '-'}</span>
+          L <span className="text-purple-400/80">{data.low?.toFixed(2) ?? '-'}</span>
         </span>
         <span className="text-muted-foreground">
           PC <span className="text-white/60">{data.prevClose?.toFixed(2) ?? '-'}</span>

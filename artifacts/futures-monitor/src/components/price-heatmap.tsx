@@ -383,8 +383,8 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         ctx.strokeStyle = '#22223a'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(LABEL_W - 5, py); ctx.lineTo(LABEL_W - 1, py); ctx.stroke();
         const distFromPrice = price !== null ? Math.abs(p - price) / (ROWS * bucketSize) : 1;
-        const labelAlpha = 0.25 + 0.45 * Math.max(0, 1 - distFromPrice * 6);
-        ctx.fillStyle = `rgba(160,160,210,${labelAlpha})`; ctx.textAlign = 'right';
+        const labelAlpha = 0.50 + 0.45 * Math.max(0, 1 - distFromPrice * 6);
+        ctx.fillStyle = `rgba(230,230,248,${labelAlpha})`; ctx.textAlign = 'right';
         ctx.fillText(p.toFixed(decimals), LABEL_W - 8, py + labelFontSize * 0.38);
       }
 
@@ -439,7 +439,11 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       }
 
       // ── 9. Time axis ──────────────────────────────────────────────────────
-      ctx.fillStyle = '#0d0d18'; ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
+      ctx.fillStyle = '#0a0a14'; ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
+      // Top border line
+      ctx.strokeStyle = '#22223a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(LABEL_W, gridH + DELTA_H); ctx.lineTo(LABEL_W + gridW, gridH + DELTA_H); ctx.stroke();
+
       const showSecs = duration <= 300_000;
       const timeFmt: Intl.DateTimeFormatOptions = {
         hour: '2-digit', minute: '2-digit', ...(showSecs ? { second: '2-digit' } : {}),
@@ -450,10 +454,16 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         const label  = ts.toLocaleTimeString([], timeFmt);
         const x      = LABEL_W + col * cellW;
         const isNow  = col === COLS;
-        ctx.fillStyle = isNow ? 'rgba(0,230,118,0.55)' : '#2e2e42';
+
+        // Tick mark
+        ctx.strokeStyle = isNow ? 'rgba(0,230,118,0.6)' : 'rgba(160,160,200,0.35)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, gridH + DELTA_H); ctx.lineTo(x, gridH + DELTA_H + 3); ctx.stroke();
+
+        ctx.fillStyle = isNow ? 'rgba(0,230,118,0.85)' : 'rgba(190,190,225,0.80)';
         ctx.font = isNow ? 'bold 9px monospace' : '9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(label, x, gridH + DELTA_H + TIME_H * 0.72);
+        ctx.fillText(label, x, gridH + DELTA_H + TIME_H * 0.78);
       }
 
       // ── 10. Status hints ──────────────────────────────────────────────────

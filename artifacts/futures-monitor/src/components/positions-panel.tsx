@@ -221,9 +221,7 @@ function PositionCard({ pos, px, feePerSide, onClose, onPartialClose, onUpdate, 
   const [addPrice, setAddPrice] = useState('');
   const addPriceRef             = useRef<HTMLInputElement>(null);
   // partial-close form
-  const [pQty, setPQty]     = useState('1');
-  const [pPrice, setPPrice] = useState('');
-  const pPriceRef           = useRef<HTMLInputElement>(null);
+  const [pQty, setPQty] = useState('1');
   // trail stop
   const [editTrail, setEditTrail] = useState(false);
   const [trailRaw, setTrailRaw]   = useState('');
@@ -245,15 +243,13 @@ function PositionCard({ pos, px, feePerSide, onClose, onPartialClose, onUpdate, 
   }
 
   function openPartial() {
-    setPPrice(px != null ? px.toFixed(2) : '');
-    setPQty(pos.qty > 1 ? '1' : '1');
+    setPQty('1');
     setForm('partial');
-    setTimeout(() => pPriceRef.current?.select(), 30);
   }
   function commitPartial() {
+    if (px == null) return;
     const q = Math.min(pos.qty, Math.max(1, parseInt(pQty, 10) || 1));
-    const p = parseFloat(pPrice);
-    if (!isNaN(p) && p > 0) onPartialClose(q, p);
+    onPartialClose(q, px);
     setForm(null);
   }
 
@@ -289,12 +285,11 @@ function PositionCard({ pos, px, feePerSide, onClose, onPartialClose, onUpdate, 
   })();
 
   const pClosePreview = (() => {
+    if (px == null) return null;
     const q = Math.min(pos.qty, Math.max(1, parseInt(pQty, 10) || 1));
-    const p = parseFloat(pPrice);
-    if (isNaN(p) || p <= 0) return null;
     const ratio     = q / pos.qty;
     const closeFees = pos.entryFees * ratio + feePerSide * q;
-    const gross     = (pos.side === 'L' ? p - pos.entry : pos.entry - p) * q * (POINT_VALUE[pos.symbol] ?? 1);
+    const gross     = (pos.side === 'L' ? px - pos.entry : pos.entry - px) * q * (POINT_VALUE[pos.symbol] ?? 1);
     return { net: gross - closeFees, remaining: pos.qty - q };
   })();
 
@@ -348,45 +343,57 @@ function PositionCard({ pos, px, feePerSide, onClose, onPartialClose, onUpdate, 
       </div>
 
       {/* Scale-in form */}
-      {form === 'add' && (
-        <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-cyan-500/15">
-          <span className="text-white/30 text-[10px] shrink-0">Add contracts:</span>
-          <input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)}
-            className="w-12 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
-          <span className="text-white/20 text-[10px]">@ price</span>
-          <input ref={addPriceRef} type="number" step="0.25" value={addPrice}
-            onChange={e => setAddPrice(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setForm(null); }}
-            className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
-          {addPreview !== null && (
-            <span className="text-white/30 text-[10px]">
-              → avg <span className="text-cyan-400">{addPreview.avgEntry.toFixed(2)}</span>
-              <span className="text-white/20 ml-1.5">entry fees −{fmtMoney(addPreview.newEntryFees)}</span>
-            </span>
-          )}
-          <button onClick={commitAddMore} className="px-2.5 py-0.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono rounded transition-colors">Confirm</button>
-          <button onClick={() => setForm(null)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
-        </div>
-      )}
+      {form === 'add' && (() => {
+        const addP  = parseFloat(addPrice);
+        const tooFar = px != null && !isNaN(addP) && Math.abs(addP - px) / px > 0.01;
+        return (
+          <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-cyan-500/15">
+            <span className="text-white/30 text-[10px] shrink-0">Add contracts:</span>
+            <input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)}
+              className="w-12 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
+            <span className="text-white/20 text-[10px]">@ price</span>
+            <input ref={addPriceRef} type="number" step="0.25" value={addPrice}
+              onChange={e => setAddPrice(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setForm(null); }}
+              className={cn('w-24 bg-black border rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none',
+                tooFar ? 'border-red-500/50 focus:border-red-400' : 'border-white/15 focus:border-white/30')} />
+            {tooFar && <span className="text-red-400/80 text-[10px]">price &gt;1% from market</span>}
+            {addPreview !== null && !tooFar && (
+              <span className="text-white/30 text-[10px]">
+                → avg <span className="text-cyan-400">{addPreview.avgEntry.toFixed(2)}</span>
+                <span className="text-white/20 ml-1.5">entry fees −{fmtMoney(addPreview.newEntryFees)}</span>
+              </span>
+            )}
+            <button onClick={commitAddMore} disabled={tooFar}
+              className="px-2.5 py-0.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">Confirm</button>
+            <button onClick={() => setForm(null)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
+          </div>
+        );
+      })()}
 
-      {/* Partial close form */}
+      {/* Partial close form — always at live market price */}
       {form === 'partial' && (
         <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-amber-500/15">
           <span className="text-amber-400/60 text-[10px] shrink-0">Close</span>
           <input type="number" min="1" max={pos.qty - 1} value={pQty} onChange={e => setPQty(e.target.value)}
-            className="w-12 bg-black border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-300 font-mono text-[10px] text-center outline-none focus:border-amber-400/50" />
-          <span className="text-white/20 text-[10px]">of {pos.qty} @ price</span>
-          <input ref={pPriceRef} type="number" step="0.25" value={pPrice}
-            onChange={e => setPPrice(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') commitPartial(); if (e.key === 'Escape') setForm(null); }}
-            className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
+            className="w-12 bg-black border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-300 font-mono text-[10px] text-center outline-none focus:border-amber-400/50" />
+          <span className="text-white/20 text-[10px]">of {pos.qty}</span>
+          <span className="text-[10px] text-white/40">
+            @ <span className="text-white/70 font-bold">{px != null ? px.toFixed(2) : '—'}</span>
+            <span className="text-white/20 ml-1">(live)</span>
+          </span>
           {pClosePreview !== null && (
             <span className="text-[10px]">
               → <span className={pClosePreview.net >= 0 ? 'text-emerald-400' : 'text-red-400'}>{fmtMoney(pClosePreview.net, true)}</span>
               <span className="text-white/25 ml-1.5">{pClosePreview.remaining}× remain</span>
             </span>
           )}
-          <button onClick={commitPartial} className="px-2.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-[10px] font-mono rounded border border-amber-500/25 transition-colors">Bank partial</button>
+          {px == null && <span className="text-amber-400/60 text-[10px]">no live price</span>}
+          <button onClick={commitPartial} disabled={px == null}
+            className="px-2.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-[10px] font-mono rounded border border-amber-500/25 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+            Bank partial
+          </button>
           <button onClick={() => setForm(null)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
         </div>
       )}
@@ -451,16 +458,18 @@ function AddTradeForm({ currentPrices, positions, onAdd, onClose }: {
 
   useEffect(() => { setTimeout(() => entryRef.current?.select(), 50); }, []);
 
+  const q  = Math.max(1, parseInt(qty, 10) || 1);
+  const e2 = parseFloat(entry);
+  const px = currentPrices[sym];
+  const entryTooFar = px != null && !isNaN(e2) && Math.abs(e2 - px) / px > 0.01;
+
   function submit() {
+    if (entryTooFar) return;
     const e = parseFloat(entry), q = Math.max(1, parseInt(qty, 10) || 1);
     if (isNaN(e)) return;
     onAdd(sym, side, q, e);
     onClose();
   }
-
-  const q  = Math.max(1, parseInt(qty, 10) || 1);
-  const e2 = parseFloat(entry);
-  const px = currentPrices[sym];
 
   // Check if this will merge into an existing position
   const existing = positions.find(p => p.symbol === sym && p.side === side);
@@ -494,7 +503,9 @@ function AddTradeForm({ currentPrices, positions, onAdd, onClose }: {
         <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Entry Price</label>
         <input ref={entryRef} type="number" step="0.25" value={entry}
           onChange={e => setEntry(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
-          className="w-28 bg-black border border-[#2a2a3e] rounded px-2 py-1.5 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
+          className={cn('w-28 bg-black border rounded px-2 py-1.5 text-white font-mono text-xs text-center outline-none',
+            entryTooFar ? 'border-red-500/60 focus:border-red-400' : 'border-[#2a2a3e] focus:border-white/30')} />
+        {entryTooFar && <span className="text-red-400/80 text-[9px]">&gt;1% from market</span>}
       </div>
 
       {/* Merge or new-position preview */}
@@ -513,7 +524,8 @@ function AddTradeForm({ currentPrices, positions, onAdd, onClose }: {
         </div>
       ) : null}
 
-      <button onClick={submit} className="px-5 py-1.5 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors">
+      <button onClick={submit} disabled={entryTooFar}
+        className="px-5 py-1.5 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
         {mergePreview ? 'Stack' : 'Open'}
       </button>
     </div>

@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { useMarketData } from '@/hooks/use-market-data';
-import { ContractPanel } from '@/components/contract-panel';
-import { PriceHeatmap }  from '@/components/price-heatmap';
-import { SettingsPanel } from '@/components/settings-panel';
+import { ContractPanel }  from '@/components/contract-panel';
+import { PriceHeatmap }   from '@/components/price-heatmap';
+import { SettingsPanel }  from '@/components/settings-panel';
+import { PositionsPanel } from '@/components/positions-panel';
 
 const BUCKET = { MES: 0.5, MNQ: 2.0 } as const;
 
@@ -16,6 +17,11 @@ export default function TerminalPage() {
 
   const mesData = quotes['MES'] ?? quotes['CME_MINI:MES1!'];
   const mnqData = quotes['MNQ'] ?? quotes['CME_MINI:MNQ1!'];
+
+  const currentPrices = {
+    MES: mesData?.price ?? null,
+    MNQ: mnqData?.price ?? null,
+  };
 
   return (
     <div className="h-screen bg-[#04040a] text-white flex flex-col px-3 pt-2.5 pb-2 font-sans selection:bg-white/20 overflow-hidden">
@@ -32,7 +38,9 @@ export default function TerminalPage() {
         <SettingsPanel status={status} sendToken={sendToken} />
       </header>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-3 min-h-0">
+      <PositionsPanel currentPrices={currentPrices} />
+
+      <div className="flex-1 flex flex-col md:flex-row gap-3 min-h-0 mt-2">
         <div className="flex-1 flex flex-col gap-2 min-h-0">
           <ContractPanel symbol="MES" data={mesData} />
           <PriceHeatmap

@@ -340,6 +340,125 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         drawSphere(ctx, t.x, t.y, BUBBLE_R, t.isUp, Math.max(0.12, fade * 0.92));
       }
 
+      // ── 4.5. Session VWAP + ±1σ / ±2σ bands ─────────────────────────────
+      {
+        // CME Globex session anchor: 23:00 UTC (= 6 pm ET)
+        const anchor = (() => {
+          const d = new Date(); d.setUTCHours(23, 0, 0, 0);
+          if (d.getTime() > now) d.setUTCDate(d.getUTCDate() - 1);
+          return d.getTime();
+        })();
+
+        // Pull ticks from this session, sorted ascending
+        const sTicks = allTicks.filter(t => t.ts >= anchor).sort((a, b) => a.ts - b.ts);
+
+        if (sTicks.length >= 3) {
+          // Per-tick delta volume (cumulative field → delta)
+          const tVolumes: number[] = [];
+          for (let i = 0; i < sTicks.length; i++) {
+            const dv = i === 0 ? (sTicks[i].vol || 1) : Math.max(0, sTicks[i].vol - sTicks[i - 1].vol);
+            tVolumes.push(dv > 0 ? dv : 1);   // never zero-weight
+          }
+
+          // Walk columns; for each column boundary accumulate up to that time
+          const vwapArr = new Float64Array(COLS + 1).fill(NaN);
+          const sdArr   = new Float64Array(COLS + 1).fill(0);
+          let cumV = 0, cumPV = 0, cumPV2 = 0, ti2 = 0;
+
+          for (let col = 0; col <= COLS; col++) {
+            const colTime = now - (COLS - col) * bucketMs;
+            while (ti2 < sTicks.length && sTicks[ti2].ts <= colTime) {
+              const w = tVolumes[ti2];
+              cumPV  += w * sTicks[ti2].price;
+              cumPV2 += w * sTicks[ti2].price * sTicks[ti2].price;
+              cumV   += w;
+              ti2++;
+            }
+            if (cumV > 0) {
+              const vwap = cumPV / cumV;
+              const sd   = Math.sqrt(Math.max(0, cumPV2 / cumV - vwap * vwap));
+              vwapArr[col] = vwap;
+              sdArr[col]   = sd;
+            }
+          }
+
+          // Helper: trace a polyline for price offset
+          const traceLine = (offset: number) => {
+            let started = false;
+            for (let col = 0; col <= COLS; col++) {
+              if (isNaN(vwapArr[col])) { started = false; continue; }
+              const x = LABEL_W + col * cellW;
+              const y = toY(vwapArr[col] + offset * sdArr[col]);
+              if (y < -2 || y > gridH + 2) { started = false; continue; }
+              if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+            }
+          };
+
+          ctx.save();
+
+          // ±2σ fill
+          ctx.beginPath();
+          let fs = false;
+          for (let col = 0; col <= COLS; col++) {
+            if (isNaN(vwapArr[col])) { fs = false; continue; }
+            const x = LABEL_W + col * cellW, y = toY(vwapArr[col] + 2 * sdArr[col]);
+            if (!fs) { ctx.moveTo(x, y); fs = true; } else { ctx.lineTo(x, y); }
+          }
+          for (let col = COLS; col >= 0; col--) {
+            if (isNaN(vwapArr[col])) continue;
+            ctx.lineTo(LABEL_W + col * cellW, toY(vwapArr[col] - 2 * sdArr[col]));
+          }
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(130,80,200,0.05)';
+          ctx.fill();
+
+          // ±1σ fill
+          ctx.beginPath(); fs = false;
+          for (let col = 0; col <= COLS; col++) {
+            if (isNaN(vwapArr[col])) { fs = false; continue; }
+            const x = LABEL_W + col * cellW, y = toY(vwapArr[col] + 1 * sdArr[col]);
+            if (!fs) { ctx.moveTo(x, y); fs = true; } else { ctx.lineTo(x, y); }
+          }
+          for (let col = COLS; col >= 0; col--) {
+            if (isNaN(vwapArr[col])) continue;
+            ctx.lineTo(LABEL_W + col * cellW, toY(vwapArr[col] - 1 * sdArr[col]));
+          }
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(130,80,200,0.09)';
+          ctx.fill();
+
+          // ±2σ dashed lines
+          ctx.setLineDash([3, 5]); ctx.lineWidth = 0.8;
+          ctx.strokeStyle = 'rgba(160,100,230,0.5)';
+          ctx.beginPath(); traceLine(+2); ctx.stroke();
+          ctx.beginPath(); traceLine(-2); ctx.stroke();
+
+          // ±1σ dashed lines
+          ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(160,100,230,0.7)';
+          ctx.beginPath(); traceLine(+1); ctx.stroke();
+          ctx.beginPath(); traceLine(-1); ctx.stroke();
+
+          // VWAP centre line (solid)
+          ctx.setLineDash([]); ctx.lineWidth = 1.5;
+          ctx.strokeStyle = 'rgba(200,170,255,0.9)';
+          ctx.beginPath(); traceLine(0); ctx.stroke();
+
+          // Right-edge VWAP label
+          const lastV = Array.from(vwapArr).reverse().find(v => !isNaN(v));
+          if (lastV !== undefined) {
+            const vy = Math.max(8, Math.min(gridH - 8, toY(lastV)));
+            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillRect(LABEL_W + gridW - 56, vy - 6, 56, 12);
+            ctx.fillStyle = 'rgba(200,170,255,0.95)';
+            ctx.font = 'bold 8px monospace'; ctx.textAlign = 'right';
+            ctx.fillText(`VWAP ${lastV.toFixed(2)}`, LABEL_W + gridW - 2, vy + 3);
+          }
+
+          ctx.restore();
+        }
+      }
+
       // ── 5. Price axis labels ──────────────────────────────────────────────
       const minLabelSpacing = 9; let labelStep = 1;
       while (cellH * labelStep < minLabelSpacing) labelStep++;

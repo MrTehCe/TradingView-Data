@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { logger } from "../lib/logger";
+import { getFeed } from "../lib/marketDataWs";
 
 const router = Router();
 
@@ -124,7 +125,9 @@ router.post("/auth/tradingview/login", async (req, res) => {
     if (data.user) {
       const cookieStr = serializeCookies(cookies);
       const jwtToken = await getJwtToken(cookies);
-      // jwtToken may be null if TV page doesn't embed it; cookieStr auth is the fallback
+      // Apply token directly on the server — no WebSocket relay needed
+      const feed = getFeed();
+      if (feed && jwtToken) { feed.setAuth(jwtToken, cookieStr); feed.connect(); }
       res.json({ success: true, sessionId: jwtToken ?? "unauthorized_user_token", cookieStr });
       return;
     }
@@ -196,7 +199,9 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
       }
       const cookieStr = serializeCookies(finalCookies);
       const jwtToken = await getJwtToken(finalCookies);
-      // Fall back to cookie-header auth if JWT extraction fails
+      // Apply token directly on the server — no WebSocket relay needed
+      const feed = getFeed();
+      if (feed && jwtToken) { feed.setAuth(jwtToken, cookieStr); feed.connect(); }
       pendingAuth.delete(tempKey);
       res.json({ success: true, sessionId: jwtToken ?? "unauthorized_user_token", cookieStr });
       return;
@@ -218,6 +223,25 @@ router.post("/auth/tradingview/verify-2fa", async (req, res) => {
     logger.error({ err }, "TradingView 2FA error");
     res.status(500).json({ error: "Failed to verify 2FA code" });
   }
+});
+
+// ── Reconnect: frontend calls this when server reconnects without auth ─────────
+// Uses the token already saved in the browser's localStorage.
+router.post("/auth/tradingview/reconnect", (req, res) => {
+  const { token, cookieStr } = req.body as { token?: string; cookieStr?: string };
+  if (!token) {
+    res.status(400).json({ error: "token is required" });
+    return;
+  }
+  const feed = getFeed();
+  if (!feed) {
+    res.status(503).json({ error: "Feed not ready" });
+    return;
+  }
+  logger.info({ tokenPrefix: token.slice(0, 20) }, "Reconnect: re-applying saved token");
+  feed.setAuth(token, cookieStr ?? "");
+  feed.connect();
+  res.json({ ok: true });
 });
 
 export default router;

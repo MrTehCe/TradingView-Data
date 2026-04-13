@@ -89,6 +89,7 @@ export function useMarketData() {
 
   const pendingTicksRef    = useRef<Record<string, TickRecord[]>>({});
   const pendingOBRef       = useRef<Record<string, OBRecord[]>>({});
+  const lastReconnectRef   = useRef<number>(0);
 
   // ── Load history from IndexedDB on mount ──────────────────────────────────
   useEffect(() => {
@@ -249,6 +250,20 @@ export function useMarketData() {
           }));
           if (msg.authenticated) {
             setStatus(prev => ({ ...prev, needsLogin: false }));
+            lastReconnectRef.current = 0; // reset so next disconnect/reconnect can retry
+          } else {
+            // Server is up but not authenticated — re-apply saved token via REST
+            // Rate-limited to once per 30 s to avoid hammering the server.
+            const auth = loadSavedAuth();
+            const now  = Date.now();
+            if (auth && (now - lastReconnectRef.current) > 30_000) {
+              lastReconnectRef.current = now;
+              fetch('/api/auth/tradingview/reconnect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: auth.token, cookieStr: auth.cookieStr }),
+              }).catch(() => { /* will retry on next status message */ });
+            }
           }
         }
       } catch (e) { console.error('Worker message parse error', e); }

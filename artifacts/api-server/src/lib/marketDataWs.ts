@@ -33,6 +33,10 @@ function broadcast(clients: Set<WebSocket>, msg: OutgoingMessage) {
   }
 }
 
+// ── Singleton feed — accessible by auth routes to apply tokens directly ───────
+let _feed: TradingViewFeed | null = null;
+export function getFeed(): TradingViewFeed | null { return _feed; }
+
 export function attachMarketDataWs(server: Server) {
   const wss = new WebSocketServer({ server, path: "/api/ws" });
   const clients = new Set<WebSocket>();
@@ -45,7 +49,8 @@ export function attachMarketDataWs(server: Server) {
     needsLogin: false,   // server never drives the login UI — the tab decides from localStorage
   };
 
-  const feed = new TradingViewFeed(DEFAULT_SYMBOLS);
+  _feed = new TradingViewFeed(DEFAULT_SYMBOLS);
+  const feed = _feed;
 
   feed.on("quote", (quote: QuoteData) => {
     snapshot[quote.displaySymbol] = quote;

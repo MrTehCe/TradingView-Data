@@ -26,6 +26,7 @@ function EditableNumber({ value, onChange, prefix = '', suffix = '', step = 1, m
   const [editing, setEditing] = useState(false);
   const [raw, setRaw]         = useState('');
   const ref                   = useRef<HTMLInputElement>(null);
+  if (value == null || isNaN(value)) return <span className="text-white/20">—</span>;
   function start() { setRaw(value.toFixed(decimals)); setEditing(true); setTimeout(() => ref.current?.select(), 20); }
   function commit() { const v = parseFloat(raw); if (!isNaN(v) && v >= min) onChange(v); setEditing(false); }
   if (editing) return (

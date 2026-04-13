@@ -43,6 +43,27 @@ export interface AccountSettings {
 
 const POS_KEY  = 'fm_positions_v4';
 const ACCT_KEY = 'fm_account_v3';
+const MAX_TRADES = 500;   // cap closed-trade history in localStorage
+
+// Stale keys from old versions — cleared on startup to reclaim quota
+const STALE_KEYS = [
+  'fm_positions_v3', 'fm_positions_v2', 'fm_positions_v1',
+  'fm_account_v2',   'fm_account_v1',
+  'fm_tick_history', 'fm_ob_history',
+];
+
+/** Best-effort localStorage write. On QuotaExceededError: prune stale keys and retry once. */
+function trySet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
+      // Evict old-version leftovers and retry
+      for (const k of STALE_KEYS) { try { localStorage.removeItem(k); } catch {} }
+      try { localStorage.setItem(key, value); } catch {}
+    }
+  }
+}
 
 function migratePos(raw: unknown[]): Position[] {
   return (raw as Record<string, unknown>[]).map(p => ({
@@ -51,47 +72,52 @@ function migratePos(raw: unknown[]): Position[] {
   })) as Position[];
 }
 
+/** On first load, evict stale keys so we start with a clean quota slate. */
+function pruneStaleKeys() {
+  for (const k of STALE_KEYS) { try { localStorage.removeItem(k); } catch {} }
+}
+
 function loadPos(): Position[] {
+  pruneStaleKeys();
   try {
-    for (const key of [POS_KEY, 'fm_positions_v3', 'fm_positions_v2']) {
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const migrated = migratePos(Array.isArray(parsed) ? parsed : []);
-      if (key !== POS_KEY && migrated.length > 0) {
-        localStorage.setItem(POS_KEY, JSON.stringify(migrated));
-      }
-      return migrated;
-    }
-    return [];
+    const raw = localStorage.getItem(POS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return migratePos(Array.isArray(parsed) ? parsed : []);
   } catch { return []; }
 }
-function savePos(p: Position[]) { localStorage.setItem(POS_KEY, JSON.stringify(p)); }
+function savePos(p: Position[]) { trySet(POS_KEY, JSON.stringify(p)); }
 
 function migrateAcct(raw: Record<string, unknown>): AccountSettings {
-  const migratedTrades = ((raw.closedTrades as ClosedTrade[] | undefined) ?? []).map(t => ({
+  const allTrades = ((raw.closedTrades as ClosedTrade[] | undefined) ?? []).map(t => ({
     ...t,
     grossPnl: t.grossPnl ?? t.pnl ?? 0,
     fees: t.fees ?? 0,
   }));
+  // Cap history immediately on migration to avoid inflated storage
+  const closedTrades = allTrades.slice(-MAX_TRADES);
   return {
     balance: 50000,
     drawdownPct: 2.5,
     realizedPnl: 0,
     feePerSide: 0.37,
     ...raw,
-    closedTrades: migratedTrades,
+    closedTrades,
   };
 }
 
 function loadAcct(): AccountSettings {
   try {
-    const raw = localStorage.getItem(ACCT_KEY) ?? localStorage.getItem('fm_account_v2') ?? 'null';
+    const raw = localStorage.getItem(ACCT_KEY) ?? 'null';
     const parsed = JSON.parse(raw);
     return parsed ? migrateAcct(parsed) : migrateAcct({});
   } catch { return migrateAcct({}); }
 }
-function saveAcct(a: AccountSettings) { localStorage.setItem(ACCT_KEY, JSON.stringify(a)); }
+function saveAcct(a: AccountSettings) {
+  // Always trim before writing to keep the payload bounded
+  const trimmed = { ...a, closedTrades: a.closedTrades.slice(-MAX_TRADES) };
+  trySet(ACCT_KEY, JSON.stringify(trimmed));
+}
 
 // ── P&L helpers ───────────────────────────────────────────────────────────────
 

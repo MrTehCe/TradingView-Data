@@ -19,19 +19,8 @@ export interface QuoteData {
   bidSize: number | null;
 }
 
-export interface TickRecord {
-  price: number;
-  ts: number;
-  vol: number;
-}
-
-export interface OBRecord {
-  ts: number;
-  ask: number;
-  askSize: number;
-  bid: number;
-  bidSize: number;
-}
+export interface TickRecord  { price: number; ts: number; vol: number }
+export interface OBRecord    { ts: number; ask: number; askSize: number; bid: number; bidSize: number }
 
 export type IncomingMessage =
   | { type: 'quote'; data: QuoteData }
@@ -47,11 +36,15 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS = 16 * 60 * 1000;
-const TOKEN_KEY = 'fm_tv_auth_v1';
+const MAX_HISTORY_MS  = 16 * 60 * 1000;
+const PERSIST_INTERVAL = 5_000; // save every 5 s
 
+const TOKEN_KEY  = 'fm_tv_auth_v1';
+const TICKS_KEY  = 'fm_tick_history_v2';
+const OB_KEY     = 'fm_ob_history_v2';
+
+// ── Auth helpers ──────────────────────────────────────────────────────────────
 interface SavedAuth { token: string; cookieStr: string; savedAt: number }
-
 function loadSavedAuth(): SavedAuth | null {
   try { return JSON.parse(localStorage.getItem(TOKEN_KEY) ?? 'null'); } catch { return null; }
 }
@@ -60,6 +53,28 @@ function persistAuth(token: string, cookieStr: string) {
 }
 function clearAuth() { localStorage.removeItem(TOKEN_KEY); }
 
+// ── History helpers ───────────────────────────────────────────────────────────
+function loadHistory<T extends { ts: number }>(key: string): Record<string, T[]> {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, T[]>;
+    const cutoff = Date.now() - MAX_HISTORY_MS;
+    // Strip anything older than 16 min
+    const out: Record<string, T[]> = {};
+    for (const [sym, arr] of Object.entries(parsed)) {
+      const trimmed = arr.filter(r => r.ts > cutoff);
+      if (trimmed.length > 0) out[sym] = trimmed;
+    }
+    return out;
+  } catch { return {}; }
+}
+
+function saveHistory(key: string, data: Record<string, { ts: number }[]>) {
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* quota exceeded — skip */ }
+}
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
 export function useMarketData() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
 
@@ -73,12 +88,26 @@ export function useMarketData() {
   });
 
   const wsRef          = useRef<WebSocket | null>(null);
-  const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
-  const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
-  // Track all symbols the user has subscribed to this session so we can replay on reconnect
+  // Restore history from localStorage immediately so the heatmap has data on load
+  const tickHistoryRef = useRef<Record<string, TickRecord[]>>(loadHistory<TickRecord>(TICKS_KEY));
+  const orderBookRef   = useRef<Record<string, OBRecord[]>>(loadHistory<OBRecord>(OB_KEY));
   const subscribedSymbolsRef = useRef<Set<string>>(new Set());
 
-  /** Send token to the server and persist it for future page loads. */
+  // ── Periodic persistence ──────────────────────────────────────────────────
+  useEffect(() => {
+    const id = setInterval(() => {
+      saveHistory(TICKS_KEY, tickHistoryRef.current);
+      saveHistory(OB_KEY,    orderBookRef.current);
+    }, PERSIST_INTERVAL);
+    return () => {
+      clearInterval(id);
+      // Final flush on unmount
+      saveHistory(TICKS_KEY, tickHistoryRef.current);
+      saveHistory(OB_KEY,    orderBookRef.current);
+    };
+  }, []);
+
+  // ── Token helpers ─────────────────────────────────────────────────────────
   const sendToken = useCallback((token: string, cookieStr = '') => {
     persistAuth(token, cookieStr);
     setStatus(s => ({ ...s, hasSavedToken: true, needsLogin: false }));
@@ -87,13 +116,12 @@ export function useMarketData() {
     }
   }, []);
 
-  /** Remove the saved token (logout). */
   const clearToken = useCallback(() => {
     clearAuth();
     setStatus(s => ({ ...s, hasSavedToken: false, needsLogin: true, authenticated: false }));
   }, []);
 
-  /** Subscribe to a symbol. Replayed automatically on reconnect. */
+  // ── Symbol subscription ───────────────────────────────────────────────────
   const subscribeSymbol = useCallback((tvSymbol: string) => {
     subscribedSymbolsRef.current.add(tvSymbol);
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -101,30 +129,21 @@ export function useMarketData() {
     }
   }, []);
 
+  // ── WebSocket ─────────────────────────────────────────────────────────────
   const connect = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
 
     ws.onopen = () => {
       setStatus(s => ({ ...s, wsConnected: true }));
-
-      // Auto-replay saved auth token
       const auth = loadSavedAuth();
-      if (auth) {
-        ws.send(JSON.stringify({ type: 'set_auth_token', token: auth.token, cookieStr: auth.cookieStr }));
-      }
-
-      // Replay any symbols the user had subscribed
+      if (auth) ws.send(JSON.stringify({ type: 'set_auth_token', token: auth.token, cookieStr: auth.cookieStr }));
       for (const sym of subscribedSymbolsRef.current) {
         ws.send(JSON.stringify({ type: 'subscribe', symbol: sym }));
       }
     };
 
-    ws.onclose = () => {
-      setStatus(s => ({ ...s, wsConnected: false, connected: false }));
-      setTimeout(connect, 3000);
-    };
-
+    ws.onclose = () => { setStatus(s => ({ ...s, wsConnected: false, connected: false })); setTimeout(connect, 3000); };
     ws.onerror = () => setStatus(s => ({ ...s, wsConnected: false }));
 
     ws.onmessage = (event) => {
@@ -134,8 +153,8 @@ export function useMarketData() {
         if (msg.type === 'quote') {
           setQuotes(prev => ({ ...prev, [msg.data.displaySymbol]: msg.data }));
 
-          const sym = msg.data.displaySymbol;
-          const now = Date.now();
+          const sym    = msg.data.displaySymbol;
+          const now    = Date.now();
           const cutoff = now - MAX_HISTORY_MS;
 
           if (msg.data.price !== null) {
@@ -147,11 +166,7 @@ export function useMarketData() {
           if (msg.data.ask !== null && msg.data.bid !== null &&
               msg.data.askSize !== null && msg.data.bidSize !== null) {
             const buf = orderBookRef.current[sym] ?? [];
-            buf.push({
-              ts: now,
-              ask: msg.data.ask, askSize: msg.data.askSize,
-              bid: msg.data.bid, bidSize: msg.data.bidSize,
-            });
+            buf.push({ ts: now, ask: msg.data.ask, askSize: msg.data.askSize, bid: msg.data.bid, bidSize: msg.data.bidSize });
             orderBookRef.current[sym] = buf.filter(r => r.ts > cutoff);
           }
 
@@ -165,20 +180,14 @@ export function useMarketData() {
             ...prev,
             connected: msg.connected,
             authenticated: msg.authenticated,
-            // If the server says we need a token but we have one saved, keep needsLogin false
-            // (the token was already sent on open; the server will authenticate momentarily)
             needsLogin: msg.needsLogin && !loadSavedAuth(),
             error: msg.error,
           }));
-
-          // If the server authenticated us successfully, update needsLogin to false
           if (msg.authenticated) {
             setStatus(prev => ({ ...prev, needsLogin: false }));
           }
         }
-      } catch (e) {
-        console.error('WS parse error', e);
-      }
+      } catch (e) { console.error('WS parse error', e); }
     };
 
     wsRef.current = ws;

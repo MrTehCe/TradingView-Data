@@ -7,7 +7,7 @@ import { SettingsPanel }  from '@/components/settings-panel';
 const BUCKET = { MES: 0.5, MNQ: 2.0 } as const;
 
 export default function TerminalPage() {
-  const { quotes, status, sendToken, tickHistoryRef, orderBookRef } = useMarketData();
+  const { quotes, status, sendToken, tickHistoryRef, orderBookRef, historyBarsRef } = useMarketData();
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -35,6 +35,7 @@ export default function TerminalPage() {
             bucketSize={BUCKET.MES}
             tickHistoryRef={tickHistoryRef}
             orderBookRef={orderBookRef}
+            historyBarsRef={historyBarsRef}
           />
         </div>
 
@@ -46,6 +47,7 @@ export default function TerminalPage() {
             bucketSize={BUCKET.MNQ}
             tickHistoryRef={tickHistoryRef}
             orderBookRef={orderBookRef}
+            historyBarsRef={historyBarsRef}
           />
         </div>
       </div>

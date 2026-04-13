@@ -33,10 +33,21 @@ export interface OBRecord {
   bidSize: number;
 }
 
+export interface HistoryBar {
+  time: number;    // unix timestamp in seconds
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export type IncomingMessage =
   | { type: 'quote'; data: QuoteData }
   | { type: 'status'; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: 'snapshot'; data: Record<string, QuoteData> };
+  | { type: 'snapshot'; data: Record<string, QuoteData> }
+  | { type: 'history'; displaySymbol: string; bars: HistoryBar[] }
+  | { type: 'history_snapshot'; data: Record<string, { displaySymbol: string; bars: HistoryBar[] }> };
 
 export interface MarketStatus {
   connected: boolean;
@@ -46,7 +57,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS = 16 * 60 * 1000;
+const MAX_TICK_MS = 35 * 60 * 1000;  // 35 min of ticks
 
 export function useMarketData() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
@@ -60,6 +71,7 @@ export function useMarketData() {
   const wsRef          = useRef<WebSocket | null>(null);
   const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
   const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
+  const historyBarsRef = useRef<Record<string, HistoryBar[]>>({});
 
   const sendToken = useCallback((token: string, cookieStr = '') => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -84,25 +96,21 @@ export function useMarketData() {
 
           const sym = msg.data.displaySymbol;
           const now = Date.now();
-          const cutoff = now - MAX_HISTORY_MS;
+          const cutoff = now - MAX_TICK_MS;
 
-          // Tick history
           if (msg.data.price !== null) {
             const buf = tickHistoryRef.current[sym] ?? [];
             buf.push({ price: msg.data.price, ts: now, vol: msg.data.volume ?? 0 });
             tickHistoryRef.current[sym] = buf.filter(t => t.ts > cutoff);
           }
 
-          // Order book history
           if (msg.data.ask !== null && msg.data.bid !== null &&
               msg.data.askSize !== null && msg.data.bidSize !== null) {
             const buf = orderBookRef.current[sym] ?? [];
             buf.push({
               ts: now,
-              ask: msg.data.ask,
-              askSize: msg.data.askSize,
-              bid: msg.data.bid,
-              bidSize: msg.data.bidSize,
+              ask: msg.data.ask, askSize: msg.data.askSize,
+              bid: msg.data.bid, bidSize: msg.data.bidSize,
             });
             orderBookRef.current[sym] = buf.filter(r => r.ts > cutoff);
           }
@@ -111,6 +119,14 @@ export function useMarketData() {
           const snap: Record<string, QuoteData> = {};
           for (const q of Object.values(msg.data)) snap[q.displaySymbol] = q;
           setQuotes(prev => ({ ...prev, ...snap }));
+
+        } else if (msg.type === 'history') {
+          historyBarsRef.current[msg.displaySymbol] = msg.bars;
+
+        } else if (msg.type === 'history_snapshot') {
+          for (const [disp, entry] of Object.entries(msg.data)) {
+            historyBarsRef.current[disp] = entry.bars;
+          }
 
         } else if (msg.type === 'status') {
           setStatus(prev => ({
@@ -134,5 +150,5 @@ export function useMarketData() {
     return () => wsRef.current?.close();
   }, [connect]);
 
-  return { quotes, status, sendToken, tickHistoryRef, orderBookRef };
+  return { quotes, status, sendToken, tickHistoryRef, orderBookRef, historyBarsRef };
 }

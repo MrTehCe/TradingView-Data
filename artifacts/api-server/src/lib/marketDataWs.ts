@@ -1,6 +1,6 @@
 import { IncomingMessage, Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { TradingViewFeed, type QuoteData, type HistoryBar, type TvConnectionStatus } from "./tradingview";
+import { TradingViewFeed, type QuoteData, type TvConnectionStatus } from "./tradingview";
 import { logger } from "./logger";
 
 const SYMBOLS = ["CME_MINI:MNQ1!", "CME_MINI:MES1!"];
@@ -8,9 +8,7 @@ const SYMBOLS = ["CME_MINI:MNQ1!", "CME_MINI:MES1!"];
 type OutgoingMessage =
   | { type: "quote"; data: QuoteData }
   | { type: "status"; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: "snapshot"; data: Record<string, QuoteData> }
-  | { type: "history"; displaySymbol: string; bars: HistoryBar[] }
-  | { type: "history_snapshot"; data: Record<string, { displaySymbol: string; bars: HistoryBar[] }> };
+  | { type: "snapshot"; data: Record<string, QuoteData> };
 
 function broadcast(clients: Set<WebSocket>, msg: OutgoingMessage) {
   const payload = JSON.stringify(msg);
@@ -40,10 +38,6 @@ export function attachMarketDataWs(server: Server) {
     broadcast(clients, { type: "quote", data: quote });
   });
 
-  feed.on("history", ({ displaySymbol, bars }: { symbol: string; displaySymbol: string; bars: HistoryBar[] }) => {
-    broadcast(clients, { type: "history", displaySymbol, bars });
-  });
-
   feed.on("status", (status: TvConnectionStatus) => {
     currentStatus = {
       type: "status",
@@ -63,12 +57,6 @@ export function attachMarketDataWs(server: Server) {
 
     if (Object.keys(snapshot).length > 0) {
       ws.send(JSON.stringify({ type: "snapshot", data: snapshot }));
-    }
-
-    // Send any cached history bars to the new client
-    const histSnap = feed.getHistorySnapshot();
-    if (Object.keys(histSnap).length > 0) {
-      ws.send(JSON.stringify({ type: "history_snapshot", data: histSnap }));
     }
 
     ws.on("message", (raw) => {

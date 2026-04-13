@@ -1,13 +1,13 @@
 import { useEffect } from 'react';
 import { useMarketData } from '@/hooks/use-market-data';
-import { ContractPanel }  from '@/components/contract-panel';
-import { PriceHeatmap }   from '@/components/price-heatmap';
-import { SettingsPanel }  from '@/components/settings-panel';
+import { ContractPanel } from '@/components/contract-panel';
+import { PriceHeatmap }  from '@/components/price-heatmap';
+import { SettingsPanel } from '@/components/settings-panel';
 
 const BUCKET = { MES: 0.5, MNQ: 2.0 } as const;
 
 export default function TerminalPage() {
-  const { quotes, status, sendToken, tickHistoryRef, orderBookRef, historyBarsRef } = useMarketData();
+  const { quotes, status, sendToken, tickHistoryRef, orderBookRef } = useMarketData();
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -35,7 +35,6 @@ export default function TerminalPage() {
             bucketSize={BUCKET.MES}
             tickHistoryRef={tickHistoryRef}
             orderBookRef={orderBookRef}
-            historyBarsRef={historyBarsRef}
           />
         </div>
 
@@ -47,7 +46,6 @@ export default function TerminalPage() {
             bucketSize={BUCKET.MNQ}
             tickHistoryRef={tickHistoryRef}
             orderBookRef={orderBookRef}
-            historyBarsRef={historyBarsRef}
           />
         </div>
       </div>

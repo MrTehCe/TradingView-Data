@@ -66,15 +66,6 @@ export interface QuoteData {
   bidSize: number | null;
 }
 
-export interface HistoryBar {
-  time: number;    // unix timestamp in seconds
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
 export interface TvConnectionStatus {
   connected: boolean;
   authenticated: boolean;
@@ -92,7 +83,6 @@ const TV_WS_URL =
 export class TradingViewFeed extends EventEmitter {
   private ws: WebSocket | null = null;
   private quoteSession: string;
-  private chartSession = "";
   private readonly symbols: string[];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 5000;
@@ -100,11 +90,6 @@ export class TradingViewFeed extends EventEmitter {
   private cookieStr: string;
   private sessionSetup = false;
   private quoteSnapshot: Map<string, QuoteData> = new Map();
-
-  // chart/history tracking
-  private seriesSymMap = new Map<string, string>();  // seriesId -> fullSymbol
-  private barStore     = new Map<string, HistoryBar[]>(); // fullSymbol -> sorted bars
-  private static readonly HISTORY_BARS = 480; // ~8 hours of 1-min bars
 
   constructor(symbols: string[], authToken = "unauthorized_user_token", cookieStr = "") {
     super();
@@ -122,18 +107,8 @@ export class TradingViewFeed extends EventEmitter {
     }
   }
 
-  // keep backward compat
   setAuthToken(token: string) {
     this.setAuth(token);
-  }
-
-  getHistorySnapshot(): Record<string, { symbol: string; displaySymbol: string; bars: HistoryBar[] }> {
-    const result: Record<string, { symbol: string; displaySymbol: string; bars: HistoryBar[] }> = {};
-    for (const [sym, bars] of this.barStore) {
-      const display = SYMBOL_DISPLAY[sym] ?? sym;
-      result[display] = { symbol: sym, displaySymbol: display, bars };
-    }
-    return result;
   }
 
   connect() {
@@ -202,16 +177,11 @@ export class TradingViewFeed extends EventEmitter {
       if (content["session_id"] !== undefined && !this.sessionSetup) {
         this.sessionSetup = true;
         this.setupQuoteSession();
-        this.setupChartSession();
         continue;
       }
 
       if (msgType === "qsd") {
-        try { this.handleQuoteData(content); }
-        catch (err) { logger.error({ err }, "handleQuoteData error"); }
-      } else if (msgType === "timescale_update" || msgType === "du") {
-        try { this.handleBarData(content); }
-        catch (err) { logger.error({ err }, "handleBarData error"); }
+        this.handleQuoteData(content);
       } else if (msgType === "critical_error" || msgType === "protocol_error") {
         logger.error({ msgType, content: JSON.stringify(content).slice(0, 300) }, "TV protocol error");
       }
@@ -255,74 +225,6 @@ export class TradingViewFeed extends EventEmitter {
     );
   }
 
-  private setupChartSession() {
-    try {
-      this.chartSession = generateSessionId("cs_");
-      this.seriesSymMap.clear();
-      // chart_create_session takes only the session id
-      this.send(createMessage("chart_create_session", [this.chartSession]));
-
-      this.symbols.forEach((sym, i) => {
-        const symId    = `sds_sym_${i}`;
-        const seriesId = `sds_${i}`;
-        this.seriesSymMap.set(seriesId, sym);
-
-        // resolve_symbol: [chartSession, localAlias, symbolSpec]
-        this.send(createMessage("resolve_symbol", [
-          this.chartSession, symId,
-          `={"symbol":"${sym}","adjustment":"splits","currency-id":"USD"}`,
-        ]));
-
-        // create_series: [chartSession, seriesId, name, symbolRef, resolution, count, range]
-        this.send(createMessage("create_series", [
-          this.chartSession, seriesId, `s${i}`, symId,
-          "1",
-          TradingViewFeed.HISTORY_BARS,
-          "",
-        ]));
-      });
-
-      logger.info({ session: this.chartSession }, "TradingView chart session ready");
-    } catch (err) {
-      logger.error({ err }, "Failed to setup chart session (quote session unaffected)");
-    }
-  }
-
-  private handleBarData(content: Record<string, unknown>) {
-    const params = content["p"] as unknown[];
-    if (!Array.isArray(params) || params.length < 2) return;
-
-    const updates = params[1];
-    if (!updates || typeof updates !== "object" || Array.isArray(updates)) return;
-
-    for (const [seriesId, seriesData] of Object.entries(updates as Record<string, unknown>)) {
-      const sym = this.seriesSymMap.get(seriesId);
-      if (!sym) continue;
-
-      if (!seriesData || typeof seriesData !== "object") continue;
-      const sd = seriesData as { s?: { i: number; v: number[] }[] };
-      if (!sd?.s?.length) continue;
-
-      const existing = this.barStore.get(sym) ?? [];
-      const barMap = new Map<number, HistoryBar>(existing.map(b => [b.time, b]));
-
-      for (const bar of sd.s) {
-        if (!bar.v || bar.v.length < 6) continue;
-        const [time, open, high, low, close, volume] = bar.v;
-        if (time && typeof open === "number") {
-          barMap.set(time, { time, open, high, low, close, volume: volume ?? 0 });
-        }
-      }
-
-      const sorted = Array.from(barMap.values()).sort((a, b) => a.time - b.time);
-      this.barStore.set(sym, sorted);
-
-      const display = SYMBOL_DISPLAY[sym] ?? sym;
-      logger.info({ sym, display, bars: sorted.length }, "History bars updated");
-      this.emit("history", { symbol: sym, displaySymbol: display, bars: sorted });
-    }
-  }
-
   private handleQuoteData(content: Record<string, unknown>) {
     const params = content["p"] as [
       string,
@@ -336,7 +238,6 @@ export class TradingViewFeed extends EventEmitter {
     const symbolKey = payload.n;
     const v = payload.v ?? {};
 
-    // Merge incoming fields with the last-known snapshot for this symbol
     const prev = this.quoteSnapshot.get(symbolKey);
     const merged: QuoteData = {
       symbol: symbolKey,
@@ -359,7 +260,6 @@ export class TradingViewFeed extends EventEmitter {
 
     this.quoteSnapshot.set(symbolKey, merged);
 
-    // Only emit if we have at least a price
     if (merged.price !== null) {
       logger.info(
         { symbol: symbolKey, status: payload.s, price: merged.price },

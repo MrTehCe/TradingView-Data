@@ -33,21 +33,10 @@ export interface OBRecord {
   bidSize: number;
 }
 
-export interface HistoryBar {
-  time: number;    // unix timestamp in seconds
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
 export type IncomingMessage =
   | { type: 'quote'; data: QuoteData }
   | { type: 'status'; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: 'snapshot'; data: Record<string, QuoteData> }
-  | { type: 'history'; displaySymbol: string; bars: HistoryBar[] }
-  | { type: 'history_snapshot'; data: Record<string, { displaySymbol: string; bars: HistoryBar[] }> };
+  | { type: 'snapshot'; data: Record<string, QuoteData> };
 
 export interface MarketStatus {
   connected: boolean;
@@ -57,7 +46,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_TICK_MS = 35 * 60 * 1000;  // 35 min of ticks
+const MAX_HISTORY_MS = 16 * 60 * 1000;
 
 export function useMarketData() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
@@ -71,7 +60,6 @@ export function useMarketData() {
   const wsRef          = useRef<WebSocket | null>(null);
   const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
   const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
-  const historyBarsRef = useRef<Record<string, HistoryBar[]>>({});
 
   const sendToken = useCallback((token: string, cookieStr = '') => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -96,7 +84,7 @@ export function useMarketData() {
 
           const sym = msg.data.displaySymbol;
           const now = Date.now();
-          const cutoff = now - MAX_TICK_MS;
+          const cutoff = now - MAX_HISTORY_MS;
 
           if (msg.data.price !== null) {
             const buf = tickHistoryRef.current[sym] ?? [];
@@ -120,14 +108,6 @@ export function useMarketData() {
           for (const q of Object.values(msg.data)) snap[q.displaySymbol] = q;
           setQuotes(prev => ({ ...prev, ...snap }));
 
-        } else if (msg.type === 'history') {
-          historyBarsRef.current[msg.displaySymbol] = msg.bars;
-
-        } else if (msg.type === 'history_snapshot') {
-          for (const [disp, entry] of Object.entries(msg.data)) {
-            historyBarsRef.current[disp] = entry.bars;
-          }
-
         } else if (msg.type === 'status') {
           setStatus(prev => ({
             ...prev,
@@ -150,5 +130,5 @@ export function useMarketData() {
     return () => wsRef.current?.close();
   }, [connect]);
 
-  return { quotes, status, sendToken, tickHistoryRef, orderBookRef, historyBarsRef };
+  return { quotes, status, sendToken, tickHistoryRef, orderBookRef };
 }

@@ -323,7 +323,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
             ctx.lineTo(LABEL_W + col * cellW, toY(vwapArr[col] - 2 * sdArr[col]));
           }
           ctx.closePath();
-          ctx.fillStyle = 'rgba(130,80,200,0.05)';
+          ctx.fillStyle = 'rgba(150,100,220,0.13)';
           ctx.fill();
 
           ctx.beginPath(); fs = false;
@@ -337,29 +337,29 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
             ctx.lineTo(LABEL_W + col * cellW, toY(vwapArr[col] - 1 * sdArr[col]));
           }
           ctx.closePath();
-          ctx.fillStyle = 'rgba(130,80,200,0.09)';
+          ctx.fillStyle = 'rgba(150,100,220,0.20)';
           ctx.fill();
 
-          ctx.setLineDash([3, 5]); ctx.lineWidth = 0.8;
-          ctx.strokeStyle = 'rgba(160,100,230,0.5)';
+          ctx.setLineDash([3, 5]); ctx.lineWidth = 1;
+          ctx.strokeStyle = 'rgba(175,125,245,0.80)';
           ctx.beginPath(); traceLine(+2); ctx.stroke();
           ctx.beginPath(); traceLine(-2); ctx.stroke();
 
-          ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
-          ctx.strokeStyle = 'rgba(160,100,230,0.7)';
+          ctx.setLineDash([2, 3]); ctx.lineWidth = 1.2;
+          ctx.strokeStyle = 'rgba(190,145,255,0.92)';
           ctx.beginPath(); traceLine(+1); ctx.stroke();
           ctx.beginPath(); traceLine(-1); ctx.stroke();
 
-          ctx.setLineDash([]); ctx.lineWidth = 1.5;
-          ctx.strokeStyle = 'rgba(200,170,255,0.9)';
+          ctx.setLineDash([]); ctx.lineWidth = 2;
+          ctx.strokeStyle = 'rgba(225,200,255,1.0)';
           ctx.beginPath(); traceLine(0); ctx.stroke();
 
           const lastV = Array.from(vwapArr).reverse().find(v => !isNaN(v));
           if (lastV !== undefined) {
             const vy = Math.max(8, Math.min(gridH - 8, toY(lastV)));
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillStyle = 'rgba(0,0,0,0.65)';
             ctx.fillRect(LABEL_W + gridW - 56, vy - 6, 56, 12);
-            ctx.fillStyle = 'rgba(200,170,255,0.95)';
+            ctx.fillStyle = 'rgba(225,200,255,1.0)';
             ctx.font = 'bold 8px monospace'; ctx.textAlign = 'right';
             ctx.fillText(`VWAP ${lastV.toFixed(2)}`, LABEL_W + gridW - 2, vy + 3);
           }

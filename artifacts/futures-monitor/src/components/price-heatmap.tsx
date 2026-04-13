@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { TickRecord, OBRecord } from '@/hooks/use-market-data';
+import { type Position, pnlDollars } from '@/hooks/use-positions';
 import { cn } from '@/lib/utils';
 
 const WINDOWS = {
@@ -19,12 +20,9 @@ const PROFILE_W     = 40;
 const TIME_H        = 18;
 const DELTA_H       = 32;
 const BUBBLE_R      = 4.5;
+const LEVEL_HIT_PX  = 8;     // pixels within which a level line is "hit"
 
-function drawSphere(
-  ctx: CanvasRenderingContext2D,
-  cx: number, cy: number, r: number,
-  isUp: boolean, alpha: number
-) {
+function drawSphere(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, isUp: boolean, alpha: number) {
   const g = ctx.createRadialGradient(cx - r * 0.32, cy - r * 0.32, r * 0.06, cx, cy, r);
   if (isUp) {
     g.addColorStop(0,    `rgba(210,255,210,${alpha})`);
@@ -35,11 +33,10 @@ function drawSphere(
     g.addColorStop(0.38, `rgba(155,45,230,${alpha * 0.88})`);
     g.addColorStop(1,    `rgba(55,5,95,${alpha * 0.45})`);
   }
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = g;
-  ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
 }
+
+interface Geometry { priceMin: number; priceMax: number; gridH: number; gridW: number }
 
 interface Props {
   symbol: string;
@@ -47,9 +44,11 @@ interface Props {
   bucketSize: number;
   tickHistoryRef: React.MutableRefObject<Record<string, TickRecord[]>>;
   orderBookRef:   React.MutableRefObject<Record<string, OBRecord[]>>;
+  positions?: Position[];
+  onUpdatePosition?: (id: string, patch: { sl?: number | null; tp?: number | null }) => void;
 }
 
-export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef, orderBookRef }: Props) {
+export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef, orderBookRef, positions = [], onUpdatePosition }: Props) {
   const [win, setWin]             = useState<WindowKey>('5m');
   const [visibleRows, setVisible] = useState(DEFAULT_ROWS);
   const [isPanning, setIsPanning] = useState(false);
@@ -57,15 +56,25 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const winRef    = useRef(win);      winRef.current    = win;
+  const winRef    = useRef(win);         winRef.current    = win;
   const priceRef  = useRef(currentPrice); priceRef.current = currentPrice;
   const rowsRef   = useRef(visibleRows);  rowsRef.current  = visibleRows;
 
-  // Pan state — offset in price units (positive = view shifted UP)
-  const panOffsetRef  = useRef(0);
-  const dragActiveRef = useRef(false);
-  const dragStartYRef = useRef(0);
-  const dragStartPanRef = useRef(0);
+  const panOffsetRef    = useRef(0);
+  const geometryRef     = useRef<Geometry | null>(null);
+
+  // ── Drag state (unified: pan or level) ───────────────────────────────────
+  type LevelDrag = { posId: string; type: 'sl' | 'tp'; draft: number };
+  const dragModeRef  = useRef<'idle' | 'pan' | 'level'>('idle');
+  const levelDragRef = useRef<LevelDrag | null>(null);
+  const panStartYRef = useRef(0);
+  const panStartPanRef = useRef(0);
+
+  // For cursor hover tracking
+  const [cursor, setCursor] = useState<'grab' | 'grabbing' | 'ns-resize'>('grab');
+
+  const positionsRef = useRef(positions);
+  positionsRef.current = positions;
 
   const resetView = useCallback(() => {
     setVisible(DEFAULT_ROWS);
@@ -73,7 +82,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     setIsPanned(false);
   }, []);
 
-  // Wheel = zoom rows
+  // ── Wheel zoom ──────────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -86,35 +95,103 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Drag = pan price axis
+  // ── Helpers using geometry ref ───────────────────────────────────────────
+  function levelY(price: number, geo: Geometry): number {
+    return geo.gridH * (1 - (price - geo.priceMin) / (geo.priceMax - geo.priceMin));
+  }
+  function priceFromY(y: number, geo: Geometry): number {
+    return geo.priceMin + (1 - y / geo.gridH) * (geo.priceMax - geo.priceMin);
+  }
+  function snapPrice(p: number): number {
+    return Math.round(p / bucketSize) * bucketSize;
+  }
+
+  // ── Find which level is near a canvas Y ─────────────────────────────────
+  function hitTest(offsetY: number): LevelDrag | null {
+    const geo = geometryRef.current;
+    if (!geo || offsetY > geo.gridH) return null;
+    const symPositions = positionsRef.current.filter(p => p.symbol === symbol);
+    for (const pos of symPositions) {
+      if (pos.sl != null) {
+        const ly = levelY(pos.sl, geo);
+        if (Math.abs(offsetY - ly) <= LEVEL_HIT_PX) return { posId: pos.id, type: 'sl', draft: pos.sl };
+      }
+      if (pos.tp != null) {
+        const ly = levelY(pos.tp, geo);
+        if (Math.abs(offsetY - ly) <= LEVEL_HIT_PX) return { posId: pos.id, type: 'tp', draft: pos.tp };
+      }
+    }
+    return null;
+  }
+
+  // ── Unified mouse events ─────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
-      dragActiveRef.current   = true;
-      dragStartYRef.current   = e.clientY;
-      dragStartPanRef.current = panOffsetRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+      const hit = hitTest(offsetY);
+      if (hit) {
+        dragModeRef.current  = 'level';
+        levelDragRef.current = hit;
+        e.preventDefault();
+        return;
+      }
+      dragModeRef.current   = 'pan';
+      panStartYRef.current  = e.clientY;
+      panStartPanRef.current = panOffsetRef.current;
       setIsPanning(true);
     };
 
     const onMove = (e: MouseEvent) => {
-      if (!dragActiveRef.current) return;
-      const container = containerRef.current;
-      if (!container) return;
-      const gridH    = container.clientHeight - TIME_H - DELTA_H;
-      const cellH    = gridH / rowsRef.current;
-      const dy       = e.clientY - dragStartYRef.current;
-      const rowDelta = dy / cellH;
-      panOffsetRef.current = dragStartPanRef.current + rowDelta * bucketSize;
-      setIsPanned(panOffsetRef.current !== 0);
+      const rect = canvas.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+
+      if (dragModeRef.current === 'level') {
+        const geo = geometryRef.current;
+        const drag = levelDragRef.current;
+        if (!geo || !drag) return;
+        drag.draft = snapPrice(priceFromY(offsetY, geo));
+        return;
+      }
+
+      if (dragModeRef.current === 'pan') {
+        const container = containerRef.current;
+        if (!container) return;
+        const gridH2 = container.clientHeight - TIME_H - DELTA_H;
+        const cellH  = gridH2 / rowsRef.current;
+        const dy     = e.clientY - panStartYRef.current;
+        panOffsetRef.current = panStartPanRef.current + (dy / cellH) * bucketSize;
+        setIsPanned(panOffsetRef.current !== 0);
+        return;
+      }
+
+      // Hover: update cursor
+      const hit = hitTest(offsetY);
+      setCursor(hit ? 'ns-resize' : 'grab');
     };
 
-    const onUp = () => {
-      if (!dragActiveRef.current) return;
-      dragActiveRef.current = false;
-      setIsPanning(false);
+    const onUp = (e: MouseEvent) => {
+      if (dragModeRef.current === 'level') {
+        const drag = levelDragRef.current;
+        if (drag && onUpdatePosition) {
+          const rect = canvas.getBoundingClientRect();
+          const offsetY = e.clientY - rect.top;
+          const geo = geometryRef.current;
+          if (geo) drag.draft = snapPrice(priceFromY(offsetY, geo));
+          onUpdatePosition(drag.posId, { [drag.type]: drag.draft });
+        }
+        levelDragRef.current = null;
+        dragModeRef.current  = 'idle';
+        return;
+      }
+      if (dragModeRef.current === 'pan') {
+        dragModeRef.current = 'idle';
+        setIsPanning(false);
+      }
     };
 
     const onDblClick = () => resetView();
@@ -123,15 +200,15 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     canvas.addEventListener('dblclick', onDblClick);
-
     return () => {
       canvas.removeEventListener('mousedown', onDown);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       canvas.removeEventListener('dblclick', onDblClick);
     };
-  }, [bucketSize, resetView]);
+  }, [bucketSize, resetView, symbol, onUpdatePosition]);
 
+  // ── Draw loop ────────────────────────────────────────────────────────────
   useEffect(() => {
     const draw = () => {
       const canvas    = canvasRef.current;
@@ -168,18 +245,18 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       ctx.fillRect(0, 0, W, H);
 
       if (!price && allTicks.length === 0) {
-        ctx.fillStyle = '#2a2a3a';
-        ctx.font = '11px monospace';
-        ctx.textAlign = 'center';
+        ctx.fillStyle = '#2a2a3a'; ctx.font = '11px monospace'; ctx.textAlign = 'center';
         ctx.fillText('Waiting for data…', LABEL_W + gridW / 2, H / 2);
         return;
       }
 
-      // Center = live price shifted by pan offset (drag up shows higher prices)
       const rawCenter = price ?? allTicks[allTicks.length - 1]?.price ?? 0;
       const center    = rawCenter - panOffsetRef.current;
       const priceMin  = center - (ROWS / 2) * bucketSize;
       const priceMax  = priceMin + ROWS * bucketSize;
+
+      // Store geometry for drag hit-testing
+      geometryRef.current = { priceMin, priceMax, gridH, gridW };
 
       const toX   = (ts: number) => LABEL_W + gridW * (1 - (now - ts) / duration);
       const toY   = (p:  number) => gridH   * (1 - (p - priceMin) / (priceMax - priceMin));
@@ -190,48 +267,33 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       if (allOB.length > 0) {
         const obBid = Array.from({ length: ROWS }, () => new Float32Array(COLS));
         const obAsk = Array.from({ length: ROWS }, () => new Float32Array(COLS));
-
         for (const rec of allOB) {
           if (now - rec.ts > duration) continue;
-          const col    = toCol(rec.ts);
-          const bidRow = toRow(rec.bid);
-          const askRow = toRow(rec.ask);
+          const col = toCol(rec.ts), bidRow = toRow(rec.bid), askRow = toRow(rec.ask);
           if (bidRow >= 0 && bidRow < ROWS) obBid[bidRow][col] = Math.max(obBid[bidRow][col], rec.bidSize);
           if (askRow >= 0 && askRow < ROWS) obAsk[askRow][col] = Math.max(obAsk[askRow][col], rec.askSize);
         }
-
         let maxBid = 1, maxAsk = 1;
         for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
           if (obBid[r][c] > maxBid) maxBid = obBid[r][c];
           if (obAsk[r][c] > maxAsk) maxAsk = obAsk[r][c];
         }
-
         for (let row = 0; row < ROWS; row++) {
           const y = (ROWS - 1 - row) * cellH;
           for (let col = 0; col < COLS; col++) {
-            const x  = LABEL_W + col * cellW;
-            const bt = obBid[row][col] / maxBid;
-            const at = obAsk[row][col] / maxAsk;
-            if (bt > 0.03) {
-              const a = 0.12 + 0.68 * bt;
-              ctx.fillStyle = `rgba(0,${Math.round(160 + 95 * bt)},${Math.round(200 + 55 * bt)},${a})`;
-              ctx.fillRect(x, y, cellW, cellH);
-            }
-            if (at > 0.03) {
-              const a = 0.12 + 0.68 * at;
-              ctx.fillStyle = `rgba(${Math.round(230 + 25 * at)},${Math.round(100 + 60 * at)},0,${a})`;
-              ctx.fillRect(x, y, cellW, cellH);
-            }
+            const x = LABEL_W + col * cellW;
+            const bt = obBid[row][col] / maxBid, at = obAsk[row][col] / maxAsk;
+            if (bt > 0.03) { const a = 0.12 + 0.68 * bt; ctx.fillStyle = `rgba(0,${Math.round(160 + 95 * bt)},${Math.round(200 + 55 * bt)},${a})`; ctx.fillRect(x, y, cellW, cellH); }
+            if (at > 0.03) { const a = 0.12 + 0.68 * at; ctx.fillStyle = `rgba(${Math.round(230 + 25 * at)},${Math.round(100 + 60 * at)},0,${a})`; ctx.fillRect(x, y, cellW, cellH); }
           }
         }
       }
 
-      // ── 2. Tick density wash ──────────────────────────────────────────────
+      // ── 2. Tick density ───────────────────────────────────────────────────
       const bgCounts = Array.from({ length: ROWS }, () => new Uint16Array(COLS));
       for (const tick of allTicks) {
         if (now - tick.ts > duration) continue;
-        const col = toCol(tick.ts);
-        const row = toRow(tick.price);
+        const col = toCol(tick.ts), row = toRow(tick.price);
         if (row >= 0 && row < ROWS) bgCounts[row][col]++;
       }
       let maxBg = 1;
@@ -246,210 +308,205 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         }
       }
 
-      // ── 3. Grid lines ─────────────────────────────────────────────────────
-      ctx.strokeStyle = '#10101a';
-      ctx.lineWidth = 0.5;
-      // Horizontal grid every N rows based on density
+      // ── 3. Grid ───────────────────────────────────────────────────────────
+      ctx.strokeStyle = '#10101a'; ctx.lineWidth = 0.5;
       const lineEvery = Math.max(1, Math.round(ROWS / 12));
-      for (let row = 0; row <= ROWS; row += lineEvery) {
-        const y = row * cellH;
-        ctx.beginPath(); ctx.moveTo(LABEL_W, y); ctx.lineTo(LABEL_W + gridW, y); ctx.stroke();
-      }
+      for (let row = 0; row <= ROWS; row += lineEvery) { const y = row * cellH; ctx.beginPath(); ctx.moveTo(LABEL_W, y); ctx.lineTo(LABEL_W + gridW, y); ctx.stroke(); }
       const colEvery = Math.ceil(COLS / 6);
-      for (let col = 0; col <= COLS; col += colEvery) {
-        const x = LABEL_W + col * cellW;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, gridH); ctx.stroke();
-      }
+      for (let col = 0; col <= COLS; col += colEvery) { const x = LABEL_W + col * cellW; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, gridH); ctx.stroke(); }
 
-      // ── 4. Price path + sphere bubbles ────────────────────────────────────
+      // ── 4. Price path + bubbles ───────────────────────────────────────────
       interface PlotTick { x: number; y: number; isUp: boolean; age: number }
       const plotTicks: PlotTick[] = [];
       let prevP: number | null = null;
       for (const tick of allTicks) {
         const age = now - tick.ts;
         if (age > duration) { prevP = tick.price; continue; }
-        const x = toX(tick.ts);
-        const y = toY(tick.price);
+        const x = toX(tick.ts), y = toY(tick.price);
         if (x < LABEL_W || y < 0 || y > gridH) { prevP = tick.price; continue; }
         plotTicks.push({ x, y, isUp: prevP === null || tick.price >= prevP, age });
         prevP = tick.price;
       }
       if (plotTicks.length > 1) {
-        ctx.beginPath();
-        ctx.moveTo(plotTicks[0].x, plotTicks[0].y);
+        ctx.beginPath(); ctx.moveTo(plotTicks[0].x, plotTicks[0].y);
         for (let i = 1; i < plotTicks.length; i++) ctx.lineTo(plotTicks[i].x, plotTicks[i].y);
-        ctx.strokeStyle = 'rgba(180,180,220,0.15)';
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
+        ctx.strokeStyle = 'rgba(180,180,220,0.15)'; ctx.lineWidth = 0.8; ctx.stroke();
       }
       for (const t of plotTicks) {
         const fade = Math.pow(1 - t.age / duration, 0.4);
         drawSphere(ctx, t.x, t.y, BUBBLE_R, t.isUp, Math.max(0.12, fade * 0.92));
       }
 
-      // ── 5. Price axis labels (every row, skip if too dense) ───────────────
-      const minLabelSpacing = 9;
-      let labelStep = 1;
+      // ── 5. Price axis labels ──────────────────────────────────────────────
+      const minLabelSpacing = 9; let labelStep = 1;
       while (cellH * labelStep < minLabelSpacing) labelStep++;
-
-      const decimals = bucketSize < 1 ? 2 : 0;
+      const decimals     = bucketSize < 1 ? 2 : 0;
       const labelFontSize = Math.max(7.5, Math.min(10.5, cellH * 0.75));
       ctx.font = `${labelFontSize}px monospace`;
-
-      // Label background strip
-      ctx.fillStyle = '#06060d';
-      ctx.fillRect(0, 0, LABEL_W - 1, gridH);
-
-      // Separator
-      ctx.strokeStyle = '#141420';
-      ctx.lineWidth = 1;
+      ctx.fillStyle = '#06060d'; ctx.fillRect(0, 0, LABEL_W - 1, gridH);
+      ctx.strokeStyle = '#141420'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(LABEL_W - 1, 0); ctx.lineTo(LABEL_W - 1, gridH); ctx.stroke();
-
       for (let row = 0; row < ROWS; row += labelStep) {
-        const p  = priceMin + row * bucketSize;
-        const py = toY(p);
+        const p = priceMin + row * bucketSize, py = toY(p);
         if (py < 0 || py > gridH) continue;
-
-        // Tick mark
-        ctx.strokeStyle = '#22223a';
-        ctx.lineWidth = 1;
+        ctx.strokeStyle = '#22223a'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(LABEL_W - 5, py); ctx.lineTo(LABEL_W - 1, py); ctx.stroke();
-
-        // Label — brighter base, extra bright near current price
         const distFromPrice = price !== null ? Math.abs(p - price) / (ROWS * bucketSize) : 1;
         const labelAlpha = 0.25 + 0.45 * Math.max(0, 1 - distFromPrice * 6);
-        ctx.fillStyle = `rgba(160,160,210,${labelAlpha})`;
-        ctx.textAlign = 'right';
+        ctx.fillStyle = `rgba(160,160,210,${labelAlpha})`; ctx.textAlign = 'right';
         ctx.fillText(p.toFixed(decimals), LABEL_W - 8, py + labelFontSize * 0.38);
       }
 
-      // ── 6. Current price dashed line + label ──────────────────────────────
+      // ── 6. Current price line + badge ─────────────────────────────────────
       if (price !== null) {
-        const py = toY(price);
-        const inView = py >= 0 && py <= gridH;
-
+        const py = toY(price); const inView = py >= 0 && py <= gridH;
         if (inView) {
-          // Highlight band
-          ctx.fillStyle = 'rgba(0,230,118,0.04)';
-          ctx.fillRect(LABEL_W, py - cellH / 2, gridW, cellH);
-          // Dashed line across grid
-          ctx.strokeStyle = '#00e676';
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([4, 3]);
-          ctx.beginPath(); ctx.moveTo(LABEL_W, py); ctx.lineTo(LABEL_W + gridW, py); ctx.stroke();
+          ctx.fillStyle = 'rgba(0,230,118,0.04)'; ctx.fillRect(LABEL_W, py - cellH / 2, gridW, cellH);
+          ctx.strokeStyle = '#00e676'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.moveTo(LABEL_W, py); ctx.lineTo(LABEL_W + gridW, py); ctx.stroke(); ctx.setLineDash([]);
+        }
+        const clampedPy = Math.max(labelFontSize, Math.min(gridH - 2, inView ? py : (py < 0 ? 2 : gridH - 2)));
+        const labelX = LABEL_W - 2, labelH2 = labelFontSize + 4, labelW2 = LABEL_W - 3;
+        ctx.fillStyle = inView ? '#00c853' : '#005c25';
+        ctx.beginPath(); ctx.roundRect(1, clampedPy - labelH2 / 2, labelW2, labelH2, 3); ctx.fill();
+        if (inView) { ctx.fillStyle = '#00c853'; ctx.beginPath(); ctx.moveTo(labelX, clampedPy - 4); ctx.lineTo(labelX + 5, clampedPy); ctx.lineTo(labelX, clampedPy + 4); ctx.fill(); }
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${labelFontSize}px monospace`; ctx.textAlign = 'center';
+        ctx.fillText(price.toFixed(decimals), labelW2 / 2 + 1, clampedPy + labelFontSize * 0.35);
+        if (!inView) { ctx.fillStyle = '#00e676'; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(py < 0 ? '▲' : '▼', LABEL_W + 4, py < 0 ? 12 : gridH - 4); }
+      }
+
+      // ── 7. Position levels (entry / SL / TP) ─────────────────────────────
+      const symPositions = positionsRef.current.filter(p => p.symbol === symbol);
+      const drag = levelDragRef.current;
+      const lbFont = Math.max(8, Math.min(10, labelFontSize));
+
+      for (const pos of symPositions) {
+        // Get live SL/TP (override with draft during drag)
+        const slPrice = drag?.posId === pos.id && drag.type === 'sl' ? drag.draft : pos.sl;
+        const tpPrice = drag?.posId === pos.id && drag.type === 'tp' ? drag.draft : pos.tp;
+
+        const entryY = toY(pos.entry);
+        const slY    = slPrice != null ? toY(slPrice) : null;
+        const tpY    = tpPrice != null ? toY(tpPrice) : null;
+
+        // Zone fills
+        if (slY !== null && entryY !== null) {
+          const top = Math.min(entryY, slY), h = Math.abs(slY - entryY);
+          ctx.fillStyle = 'rgba(220,50,50,0.06)'; ctx.fillRect(LABEL_W, top, gridW, h);
+        }
+        if (tpY !== null && entryY !== null) {
+          const top = Math.min(entryY, tpY), h = Math.abs(tpY - entryY);
+          ctx.fillStyle = 'rgba(0,200,100,0.06)'; ctx.fillRect(LABEL_W, top, gridW, h);
+        }
+
+        // Entry line
+        if (entryY >= -2 && entryY <= gridH + 2) {
+          ctx.strokeStyle = 'rgba(255,215,50,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
+          ctx.beginPath(); ctx.moveTo(LABEL_W, entryY); ctx.lineTo(LABEL_W + gridW, entryY); ctx.stroke();
           ctx.setLineDash([]);
         }
 
-        // Always draw price label on axis — clip to bounds if out of view
-        const clampedPy = Math.max(labelFontSize, Math.min(gridH - 2, inView ? py : (py < 0 ? 2 : gridH - 2)));
-        const labelX = LABEL_W - 2;
-        const labelH2 = labelFontSize + 4;
-        const labelW2 = LABEL_W - 3;
-
-        // Price badge background
-        ctx.fillStyle = inView ? '#00c853' : '#005c25';
-        ctx.beginPath();
-        ctx.roundRect(1, clampedPy - labelH2 / 2, labelW2, labelH2, 3);
-        ctx.fill();
-
-        // Arrow pointing right when in view
-        if (inView) {
-          ctx.fillStyle = '#00c853';
-          ctx.beginPath();
-          ctx.moveTo(labelX, clampedPy - 4);
-          ctx.lineTo(labelX + 5, clampedPy);
-          ctx.lineTo(labelX, clampedPy + 4);
-          ctx.fill();
+        // SL line
+        if (slY !== null && slY >= -2 && slY <= gridH + 2) {
+          const isDragging = drag?.posId === pos.id && drag.type === 'sl';
+          ctx.strokeStyle = isDragging ? 'rgba(255,100,100,1)' : 'rgba(255,80,80,0.85)';
+          ctx.lineWidth = isDragging ? 2 : 1.5; ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.moveTo(LABEL_W, slY); ctx.lineTo(LABEL_W + gridW, slY); ctx.stroke();
+          ctx.setLineDash([]);
         }
 
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${labelFontSize}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.fillText(price.toFixed(decimals), labelW2 / 2 + 1, clampedPy + labelFontSize * 0.35);
+        // TP line
+        if (tpY !== null && tpY >= -2 && tpY <= gridH + 2) {
+          const isDragging = drag?.posId === pos.id && drag.type === 'tp';
+          ctx.strokeStyle = isDragging ? 'rgba(50,255,150,1)' : 'rgba(50,220,130,0.85)';
+          ctx.lineWidth = isDragging ? 2 : 1.5; ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.moveTo(LABEL_W, tpY); ctx.lineTo(LABEL_W + gridW, tpY); ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
-        // If out of view, draw an arrow indicator
-        if (!inView) {
-          ctx.fillStyle = '#00e676';
-          ctx.font = '10px monospace';
-          ctx.textAlign = 'left';
-          ctx.fillText(py < 0 ? '▲' : '▼', LABEL_W + 4, py < 0 ? 12 : gridH - 4);
+        // ── Labels on right edge ──────────────────────────────────────────
+        const rightX = LABEL_W + gridW;
+        const pillW  = PROFILE_W + 2;
+        ctx.font = `bold ${lbFont}px monospace`;
+
+        function drawLevelPill(py: number, txt: string, bg: string, fg: string) {
+          if (py < 0 || py > gridH) return;
+          const ph = lbFont + 5;
+          ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(rightX + 1, py - ph / 2, pillW - 2, ph, 3); ctx.fill();
+          ctx.fillStyle = fg; ctx.textAlign = 'center';
+          ctx.fillText(txt, rightX + 1 + (pillW - 2) / 2, py + lbFont * 0.38);
+        }
+
+        // Entry pill
+        drawLevelPill(entryY, 'ENTRY', 'rgba(180,140,0,0.55)', '#ffe066');
+
+        // SL pill
+        if (slY !== null && slPrice != null) {
+          const slDollars = pnlDollars(pos, slPrice);
+          const slTxt = slDollars >= 0 ? `+${Math.round(slDollars)}` : `${Math.round(slDollars)}`;
+          drawLevelPill(slY, `SL ${slTxt}`, 'rgba(180,30,30,0.55)', '#ff9090');
+        }
+
+        // TP pill
+        if (tpY !== null && tpPrice != null) {
+          const tpDollars = pnlDollars(pos, tpPrice);
+          const tpTxt = tpDollars >= 0 ? `+${Math.round(tpDollars)}` : `${Math.round(tpDollars)}`;
+          drawLevelPill(tpY, `TP ${tpTxt}`, 'rgba(0,120,60,0.55)', '#60ffb0');
         }
       }
 
-      // ── 7. Right volume profile ───────────────────────────────────────────
+      // ── 8. Volume profile ─────────────────────────────────────────────────
       const rowTotals = bgCounts.map(rc => rc.reduce((s, c) => s + c, 0));
       const maxRT = Math.max(1, ...rowTotals);
-      const maxPR = PROFILE_W / 2 - 3;
-      const profCx = LABEL_W + gridW + PROFILE_W / 2;
+      const maxPR = PROFILE_W / 2 - 3, profCx = LABEL_W + gridW + PROFILE_W / 2;
       for (let row = 0; row < ROWS; row++) {
-        const t = rowTotals[row] / maxRT;
-        if (t === 0) continue;
-        const r  = Math.max(1, maxPR * Math.sqrt(t));
-        const cy = (ROWS - 1 - row) * cellH + cellH / 2;
-        ctx.beginPath();
-        ctx.arc(profCx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(0,${Math.round(120 + 110 * t)},${Math.round(70 + 80 * t)},${0.2 + 0.5 * t})`;
-        ctx.fill();
+        const t = rowTotals[row] / maxRT; if (t === 0) continue;
+        const r = Math.max(1, maxPR * Math.sqrt(t)), cy = (ROWS - 1 - row) * cellH + cellH / 2;
+        ctx.beginPath(); ctx.arc(profCx, cy, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(0,${Math.round(120 + 110 * t)},${Math.round(70 + 80 * t)},${0.2 + 0.5 * t})`; ctx.fill();
       }
 
-      // ── 8. Volume delta bars ──────────────────────────────────────────────
-      const buyVol  = new Float64Array(COLS);
-      const sellVol = new Float64Array(COLS);
-      let prevVol: number | null = null;
-      let prevPx:  number | null = null;
+      // ── 9. Volume delta bars ──────────────────────────────────────────────
+      const buyVol = new Float64Array(COLS), sellVol = new Float64Array(COLS);
+      let prevVol: number | null = null, prevPx: number | null = null;
       for (const tick of allTicks) {
         if (now - tick.ts > duration) { prevVol = tick.vol; prevPx = tick.price; continue; }
-        const col  = toCol(tick.ts);
-        const dVol = prevVol !== null ? Math.max(0, tick.vol - prevVol) : 0;
-        if (prevPx !== null && dVol > 0) {
-          if (tick.price >= prevPx) buyVol[col]  += dVol;
-          else                      sellVol[col] += dVol;
-        }
-        prevVol = tick.vol;
-        prevPx  = tick.price;
+        const col = toCol(tick.ts), dVol = prevVol !== null ? Math.max(0, tick.vol - prevVol) : 0;
+        if (prevPx !== null && dVol > 0) { if (tick.price >= prevPx) buyVol[col] += dVol; else sellVol[col] += dVol; }
+        prevVol = tick.vol; prevPx = tick.price;
       }
-      const maxDelta  = Math.max(1, ...Array.from(buyVol), ...Array.from(sellVol));
+      const maxDelta = Math.max(1, ...Array.from(buyVol), ...Array.from(sellVol));
       const deltaBase = gridH + DELTA_H / 2;
-      ctx.fillStyle = '#0d0d18';
-      ctx.fillRect(0, gridH, W, DELTA_H);
-      ctx.strokeStyle = '#1a1a28';
-      ctx.lineWidth = 1;
+      ctx.fillStyle = '#0d0d18'; ctx.fillRect(0, gridH, W, DELTA_H);
+      ctx.strokeStyle = '#1a1a28'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(LABEL_W, gridH); ctx.lineTo(LABEL_W + gridW, gridH); ctx.stroke();
       for (let col = 0; col < COLS; col++) {
-        const x  = LABEL_W + col * cellW + 1;
-        const w  = Math.max(1, cellW - 2);
-        const bh = (buyVol[col]  / maxDelta) * (DELTA_H / 2 - 2);
-        const sh = (sellVol[col] / maxDelta) * (DELTA_H / 2 - 2);
-        if (bh > 0.5) { ctx.fillStyle = 'rgba(0,210,90,0.75)';  ctx.fillRect(x, deltaBase - bh, w, bh); }
-        if (sh > 0.5) { ctx.fillStyle = 'rgba(160,50,230,0.75)'; ctx.fillRect(x, deltaBase,      w, sh); }
+        const x = LABEL_W + col * cellW + 1, w = Math.max(1, cellW - 2);
+        const bh = (buyVol[col] / maxDelta) * (DELTA_H / 2 - 2), sh = (sellVol[col] / maxDelta) * (DELTA_H / 2 - 2);
+        if (bh > 0.5) { ctx.fillStyle = 'rgba(0,210,90,0.75)'; ctx.fillRect(x, deltaBase - bh, w, bh); }
+        if (sh > 0.5) { ctx.fillStyle = 'rgba(160,50,230,0.75)'; ctx.fillRect(x, deltaBase, w, sh); }
       }
 
-      // ── 9. Time axis ──────────────────────────────────────────────────────
-      ctx.fillStyle = '#0d0d18';
-      ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
-      ctx.fillStyle = '#2e2e42';
-      ctx.font = '9px monospace';
-      ctx.textAlign = 'center';
+      // ── 10. Time axis ─────────────────────────────────────────────────────
+      ctx.fillStyle = '#0d0d18'; ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
+      ctx.fillStyle = '#2e2e42'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
       for (let col = 0; col <= COLS; col += colEvery) {
         const ageMs = bucketMs * (COLS - col);
         const label = col === COLS ? 'now' : ageMs >= 60_000 ? `${Math.round(ageMs / 60_000)}m` : `${Math.round(ageMs / 1_000)}s`;
         ctx.fillText(label, LABEL_W + col * cellW, gridH + DELTA_H + TIME_H * 0.72);
       }
 
-      // ── 10. Status indicators ─────────────────────────────────────────────
-      ctx.font = '9px monospace';
-      ctx.textAlign = 'right';
+      // ── 11. Status hints ──────────────────────────────────────────────────
+      ctx.font = '9px monospace'; ctx.textAlign = 'right';
       const hints: string[] = [];
-      if (ROWS !== DEFAULT_ROWS) hints.push(`${Math.round((DEFAULT_ROWS / ROWS) * 100)}% zoom`);
+      if (rowsRef.current !== DEFAULT_ROWS) hints.push(`${Math.round((DEFAULT_ROWS / rowsRef.current) * 100)}% zoom`);
       if (panOffsetRef.current !== 0) hints.push('panned · dbl-click to reset');
-      if (hints.length > 0) {
-        ctx.fillStyle = 'rgba(100,100,140,0.7)';
-        ctx.fillText(hints.join('  ·  '), LABEL_W + gridW - 4, gridH - 4);
-      }
+      if (drag) hints.push('dragging level…');
+      if (hints.length > 0) { ctx.fillStyle = 'rgba(100,100,140,0.7)'; ctx.fillText(hints.join('  ·  '), LABEL_W + gridW - 4, gridH - 4); }
     };
 
     draw();
-    const id = setInterval(draw, 500);
+    const id = setInterval(draw, 100);  // faster refresh when dragging
     return () => clearInterval(id);
   }, [symbol, bucketSize, tickHistoryRef, orderBookRef]);
 
@@ -473,14 +530,12 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
             ⟲
           </button>
         )}
-        <span className="ml-auto text-[10px] text-white/10 font-mono">
-          drag · scroll · dbl↩
-        </span>
+        <span className="ml-auto text-[10px] text-white/10 font-mono">drag · scroll · dbl↩</span>
       </div>
       <div
         ref={containerRef}
         className="flex-1 min-h-0 rounded-md overflow-hidden border border-[#141420]"
-        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+        style={{ cursor }}
       >
         <canvas ref={canvasRef} className="w-full h-full block" style={{ userSelect: 'none' }} />
       </div>

@@ -1,15 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useMarketData } from '@/hooks/use-market-data';
-import { ContractPanel }    from '@/components/contract-panel';
-import { PriceHeatmap }     from '@/components/price-heatmap';
-import { SettingsPanel }    from '@/components/settings-panel';
-import { PositionsPanel }   from '@/components/positions-panel';
+import { usePositions }  from '@/hooks/use-positions';
+import { ContractPanel }  from '@/components/contract-panel';
+import { PriceHeatmap }   from '@/components/price-heatmap';
+import { SettingsPanel }  from '@/components/settings-panel';
+import { PositionsPanel } from '@/components/positions-panel';
 import { SymbolSelector, KNOWN_SYMBOLS, type SymbolInfo } from '@/components/symbol-selector';
 
 const DEFAULT_SYMBOL = KNOWN_SYMBOLS.find(s => s.display === 'MES')!;
 
 export default function TerminalPage() {
   const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
+  const { positions, acct, addPosition, closePosition, updatePosition, updateAcct } = usePositions();
   const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
 
   useEffect(() => {
@@ -17,50 +19,42 @@ export default function TerminalPage() {
     return () => document.documentElement.classList.remove('dark');
   }, []);
 
-  // Subscribe to the active symbol when it changes
-  useEffect(() => {
-    subscribeSymbol(active.tv);
-  }, [active.tv, subscribeSymbol]);
+  useEffect(() => { subscribeSymbol(active.tv); }, [active.tv, subscribeSymbol]);
 
-  const handleSelect = useCallback((sym: SymbolInfo) => {
-    setActive(sym);
-  }, []);
+  const handleSelect = useCallback((sym: SymbolInfo) => setActive(sym), []);
 
-  // Build a trimmed quotes map for the selector (display → price/changePct)
   const quoteMap: Record<string, { price: number | null; changePct: number | null }> = {};
-  for (const [key, q] of Object.entries(quotes)) {
-    quoteMap[key] = { price: q.price, changePct: q.changePct };
-  }
-
-  const activeData = quotes[active.display];
+  for (const [key, q] of Object.entries(quotes)) quoteMap[key] = { price: q.price, changePct: q.changePct };
 
   const currentPrices: Record<string, number | null> = {};
-  for (const [key, q] of Object.entries(quotes)) {
-    currentPrices[key] = q.price;
-  }
+  for (const [key, q] of Object.entries(quotes)) currentPrices[key] = q.price;
+
+  const activeData = quotes[active.display];
 
   return (
     <div className="h-screen bg-[#04040a] text-white flex flex-col px-3 pt-2.5 pb-2 font-sans selection:bg-white/20 overflow-hidden">
       {/* Header */}
       <header className="flex justify-between items-center mb-2 shrink-0 gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-[11px] font-bold tracking-[0.25em] text-white/25 font-mono uppercase shrink-0">
-            Futures
-          </span>
+          <span className="text-[11px] font-bold tracking-[0.25em] text-white/25 font-mono uppercase shrink-0">Futures</span>
           <span className="h-3 w-px bg-white/10 shrink-0" />
-          <SymbolSelector
-            active={active}
-            onSelect={handleSelect}
-            quotes={quoteMap}
-          />
+          <SymbolSelector active={active} onSelect={handleSelect} quotes={quoteMap} />
         </div>
         <SettingsPanel status={status} sendToken={sendToken} clearToken={clearToken} />
       </header>
 
-      {/* Account + Positions */}
-      <PositionsPanel currentPrices={currentPrices} />
+      {/* Positions + account */}
+      <PositionsPanel
+        currentPrices={currentPrices}
+        positions={positions}
+        acct={acct}
+        onAddPosition={addPosition}
+        onClosePosition={(id) => closePosition(id, currentPrices[positions.find(p => p.id === id)?.symbol ?? ''] ?? null)}
+        onUpdatePosition={updatePosition}
+        onUpdateAcct={updateAcct}
+      />
 
-      {/* Single chart panel */}
+      {/* Chart */}
       <div className="flex-1 flex flex-col gap-2 min-h-0 mt-2">
         <ContractPanel symbol={active.display} data={activeData} />
         <PriceHeatmap
@@ -69,6 +63,8 @@ export default function TerminalPage() {
           bucketSize={active.bucket}
           tickHistoryRef={tickHistoryRef}
           orderBookRef={orderBookRef}
+          positions={positions}
+          onUpdatePosition={updatePosition}
         />
       </div>
 

@@ -10,7 +10,6 @@ const WINDOWS = {
   '30m': { duration:   1_800_000 },
   '1H':  { duration:   3_600_000 },
   '4H':  { duration:  14_400_000 },
-  '12H': { duration:  43_200_000 },
 } as const;
 type WindowKey = keyof typeof WINDOWS;
 

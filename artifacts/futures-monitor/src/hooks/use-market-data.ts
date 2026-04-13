@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { appendTicks, appendOB, loadTicks, loadOB, pruneOlderThan } from '@/lib/history-db';
 
 export interface QuoteData {
   symbol: string;
@@ -36,12 +37,11 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS  = 4 * 60 * 60 * 1000;   // 4 hours — supports 30m/1H/4H views
-const PERSIST_INTERVAL = 5_000; // save every 5 s
+const MAX_HISTORY_MS   = 4 * 60 * 60 * 1000;   // 4 hours — supports 1m–4H views
+const FLUSH_INTERVAL   = 5_000;                  // write new records to IDB every 5 s
+const PRUNE_INTERVAL   = 30 * 60 * 1000;        // prune IDB every 30 min
 
-const TOKEN_KEY  = 'fm_tv_auth_v1';
-const TICKS_KEY  = 'fm_tick_history_v2';
-const OB_KEY     = 'fm_ob_history_v2';
+const TOKEN_KEY = 'fm_tv_auth_v1';
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 interface SavedAuth { token: string; cookieStr: string; savedAt: number }
@@ -52,27 +52,6 @@ function persistAuth(token: string, cookieStr: string) {
   localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, cookieStr, savedAt: Date.now() }));
 }
 function clearAuth() { localStorage.removeItem(TOKEN_KEY); }
-
-// ── History helpers ───────────────────────────────────────────────────────────
-function loadHistory<T extends { ts: number }>(key: string): Record<string, T[]> {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, T[]>;
-    const cutoff = Date.now() - MAX_HISTORY_MS;
-    // Strip anything older than 16 min
-    const out: Record<string, T[]> = {};
-    for (const [sym, arr] of Object.entries(parsed)) {
-      const trimmed = arr.filter(r => r.ts > cutoff);
-      if (trimmed.length > 0) out[sym] = trimmed;
-    }
-    return out;
-  } catch { return {}; }
-}
-
-function saveHistory(key: string, data: Record<string, { ts: number }[]>) {
-  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* quota exceeded — skip */ }
-}
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 export function useMarketData() {
@@ -88,23 +67,58 @@ export function useMarketData() {
   });
 
   const wsRef          = useRef<WebSocket | null>(null);
-  // Restore history from localStorage immediately so the heatmap has data on load
-  const tickHistoryRef = useRef<Record<string, TickRecord[]>>(loadHistory<TickRecord>(TICKS_KEY));
-  const orderBookRef   = useRef<Record<string, OBRecord[]>>(loadHistory<OBRecord>(OB_KEY));
+  const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
+  const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
   const subscribedSymbolsRef = useRef<Set<string>>(new Set());
 
-  // ── Periodic persistence ──────────────────────────────────────────────────
+  // Pending buffers — only records added since last IDB flush
+  const pendingTicksRef = useRef<Record<string, TickRecord[]>>({});
+  const pendingOBRef    = useRef<Record<string, OBRecord[]>>({});
+
+  // ── Load history from IndexedDB on mount ──────────────────────────────────
   useEffect(() => {
-    const id = setInterval(() => {
-      saveHistory(TICKS_KEY, tickHistoryRef.current);
-      saveHistory(OB_KEY,    orderBookRef.current);
-    }, PERSIST_INTERVAL);
-    return () => {
-      clearInterval(id);
-      // Final flush on unmount
-      saveHistory(TICKS_KEY, tickHistoryRef.current);
-      saveHistory(OB_KEY,    orderBookRef.current);
+    const cutoff = Date.now() - MAX_HISTORY_MS;
+    Promise.all([loadTicks(cutoff), loadOB(cutoff)])
+      .then(([ticks, ob]) => {
+        // Merge loaded data with any already-arrived live ticks (keep both)
+        for (const [sym, arr] of Object.entries(ticks)) {
+          const live = tickHistoryRef.current[sym] ?? [];
+          const merged = [...arr, ...live];
+          merged.sort((a, b) => a.ts - b.ts);
+          tickHistoryRef.current[sym] = merged;
+        }
+        for (const [sym, arr] of Object.entries(ob)) {
+          const live = orderBookRef.current[sym] ?? [];
+          const merged = [...arr, ...live];
+          merged.sort((a, b) => a.ts - b.ts);
+          orderBookRef.current[sym] = merged;
+        }
+      })
+      .catch(err => console.warn('IDB load failed:', err));
+  }, []);
+
+  // ── Flush pending records to IndexedDB every 5 s ──────────────────────────
+  useEffect(() => {
+    const flush = () => {
+      for (const [sym, arr] of Object.entries(pendingTicksRef.current)) {
+        if (arr.length > 0) appendTicks(sym, arr).catch(() => {});
+      }
+      for (const [sym, arr] of Object.entries(pendingOBRef.current)) {
+        if (arr.length > 0) appendOB(sym, arr).catch(() => {});
+      }
+      pendingTicksRef.current = {};
+      pendingOBRef.current    = {};
     };
+
+    const id = setInterval(flush, FLUSH_INTERVAL);
+    return () => { clearInterval(id); flush(); };  // final flush on unmount
+  }, []);
+
+  // ── Prune old IDB records every 30 min ────────────────────────────────────
+  useEffect(() => {
+    const prune = () => pruneOlderThan(Date.now() - MAX_HISTORY_MS).catch(() => {});
+    const id = setInterval(prune, PRUNE_INTERVAL);
+    return () => clearInterval(id);
   }, []);
 
   // ── Token helpers ─────────────────────────────────────────────────────────
@@ -158,16 +172,22 @@ export function useMarketData() {
           const cutoff = now - MAX_HISTORY_MS;
 
           if (msg.data.price !== null) {
+            const rec: TickRecord = { price: msg.data.price, ts: now, vol: msg.data.volume ?? 0 };
+            // In-memory ring buffer
             const buf = tickHistoryRef.current[sym] ?? [];
-            buf.push({ price: msg.data.price, ts: now, vol: msg.data.volume ?? 0 });
+            buf.push(rec);
             tickHistoryRef.current[sym] = buf.filter(t => t.ts > cutoff);
+            // Stage for IDB flush
+            (pendingTicksRef.current[sym] ??= []).push(rec);
           }
 
           if (msg.data.ask !== null && msg.data.bid !== null &&
               msg.data.askSize !== null && msg.data.bidSize !== null) {
+            const rec: OBRecord = { ts: now, ask: msg.data.ask, askSize: msg.data.askSize, bid: msg.data.bid, bidSize: msg.data.bidSize };
             const buf = orderBookRef.current[sym] ?? [];
-            buf.push({ ts: now, ask: msg.data.ask, askSize: msg.data.askSize, bid: msg.data.bid, bidSize: msg.data.bidSize });
+            buf.push(rec);
             orderBookRef.current[sym] = buf.filter(r => r.ts > cutoff);
+            (pendingOBRef.current[sym] ??= []).push(rec);
           }
 
         } else if (msg.type === 'snapshot') {

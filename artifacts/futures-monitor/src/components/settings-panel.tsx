@@ -54,7 +54,7 @@ export function SettingsPanel({
         setError(data.error ?? 'Login failed. Check your credentials.');
       }
     } catch {
-      setError('Network error — could not reach TradingView.');
+      setError('Connection error — check your network and try again.');
     } finally {
       setLoading(false);
     }
@@ -85,7 +85,10 @@ export function SettingsPanel({
         }
       }
     } catch {
-      setError('Network error — could not verify code.');
+      // Server may have restarted — temp session is gone. Reset to credentials.
+      setStep('credentials');
+      setCode('');
+      setError('Connection lost — please enter your credentials again.');
     } finally {
       setLoading(false);
     }

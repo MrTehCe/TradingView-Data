@@ -328,8 +328,9 @@ function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
 }
 
 // ── Add trade form ────────────────────────────────────────────────────────────
-function AddTradeForm({ currentPrices, onAdd, onClose }: {
+function AddTradeForm({ currentPrices, positions, onAdd, onClose }: {
   currentPrices: Record<string, number | null>;
+  positions: Position[];
   onAdd: (sym: string, side: 'L' | 'S', qty: number, entry: number) => void;
   onClose: () => void;
 }) {
@@ -353,11 +354,16 @@ function AddTradeForm({ currentPrices, onAdd, onClose }: {
     onClose();
   }
 
-  const px = currentPrices[sym];
+  const q  = Math.max(1, parseInt(qty, 10) || 1);
   const e2 = parseFloat(entry);
-  const preview = !isNaN(e2) && px != null
-    ? pnlDollars({ id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty) || 1), entry: e2, openedAt: 0, sl: null, tp: null, entryFees: 0 }, px)
-    : null;
+  const px = currentPrices[sym];
+
+  // Check if this will merge into an existing position
+  const existing = positions.find(p => p.symbol === sym && p.side === side);
+  const mergePreview = existing && !isNaN(e2) ? {
+    totalQty: existing.qty + q,
+    avgEntry: (existing.entry * existing.qty + e2 * q) / (existing.qty + q),
+  } : null;
 
   return (
     <div className="flex flex-wrap items-end gap-3 p-4 bg-[#0b0b16] border border-[#1e1e2e] rounded-lg">
@@ -386,14 +392,25 @@ function AddTradeForm({ currentPrices, onAdd, onClose }: {
           onChange={e => setEntry(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
           className="w-28 bg-black border border-[#2a2a3e] rounded px-2 py-1.5 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
       </div>
-      {preview !== null && (
-        <div className={cn('flex flex-col gap-0.5', preview >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
-          <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Currently</label>
-          <span className="text-xs font-mono font-bold">{fmtMoney(preview, true)}</span>
+
+      {/* Merge or new-position preview */}
+      {mergePreview ? (
+        <div className="flex flex-col gap-0.5 text-cyan-400/70">
+          <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Stacks into</label>
+          <span className="text-xs font-mono font-bold">
+            {mergePreview.totalQty}× @ <span className="text-cyan-300">{mergePreview.avgEntry.toFixed(2)}</span>
+          </span>
+          <span className="text-[9px] text-white/20">avg of existing {existing!.qty}× + new {q}×</span>
         </div>
-      )}
+      ) : px != null && !isNaN(e2) ? (
+        <div className={cn('flex flex-col gap-0.5', pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0 }, px) >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
+          <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Currently</label>
+          <span className="text-xs font-mono font-bold">{fmtMoney(pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0 }, px), true)}</span>
+        </div>
+      ) : null}
+
       <button onClick={submit} className="px-5 py-1.5 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors">
-        Add Position
+        {mergePreview ? 'Stack' : 'Open'}
       </button>
     </div>
   );
@@ -493,7 +510,7 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
 
       {panel === 'add' && (
         <FloatingWindow title="Open a New Position" onClose={close}>
-          <AddTradeForm currentPrices={currentPrices} onAdd={onAddPosition} onClose={close} />
+          <AddTradeForm currentPrices={currentPrices} positions={positions} onAdd={onAddPosition} onClose={close} />
         </FloatingWindow>
       )}
 

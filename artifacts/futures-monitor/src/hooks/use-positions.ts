@@ -128,13 +128,31 @@ export function usePositions() {
 
   const addPosition = useCallback((sym: string, side: 'L' | 'S', qty: number, entry: number) => {
     setAcct(a => {
-      const entryFees = a.feePerSide * qty;
-      const { sl, tp } = defaultLevels(sym, side, entry);
-      const pos: Position = {
-        id: Date.now().toString(), symbol: sym, side, qty, entry, openedAt: Date.now(), sl, tp, entryFees,
-      };
-      setPositions(prev => { const next = [...prev, pos]; savePos(next); return next; });
-      return a; // acct unchanged on open
+      setPositions(prev => {
+        // Auto-stack: merge into existing open position for same symbol + side
+        const existing = prev.find(p => p.symbol === sym && p.side === side);
+        if (existing) {
+          const totalQty = existing.qty + qty;
+          const avgEntry = (existing.entry * existing.qty + entry * qty) / totalQty;
+          const newFees  = existing.entryFees + a.feePerSide * qty;
+          const next = prev.map(p => p.id === existing.id
+            ? { ...p, qty: totalQty, entry: Math.round(avgEntry * 10000) / 10000, entryFees: newFees }
+            : p
+          );
+          savePos(next);
+          return next;
+        }
+        // No existing position — open fresh
+        const entryFees   = a.feePerSide * qty;
+        const { sl, tp }  = defaultLevels(sym, side, entry);
+        const pos: Position = {
+          id: Date.now().toString(), symbol: sym, side, qty, entry, openedAt: Date.now(), sl, tp, entryFees,
+        };
+        const next = [...prev, pos];
+        savePos(next);
+        return next;
+      });
+      return a;
     });
   }, []);
 

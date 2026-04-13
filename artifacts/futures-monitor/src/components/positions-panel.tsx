@@ -474,6 +474,19 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
           <ChevronDown className={cn('w-3 h-3 transition-transform', panel === 'positions' && 'rotate-180')} />
         </button>
 
+        {/* Flatten All button */}
+        {positions.length > 0 && (
+          <button
+            onClick={() => {
+              if (!window.confirm(`Flatten all ${positions.length} position${positions.length > 1 ? 's' : ''} at market?`)) return;
+              positions.forEach(p => onClosePosition(p.id));
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-mono transition-all bg-red-500/10 border-red-500/25 text-red-400 hover:bg-red-500/20 hover:border-red-400/40 hover:text-red-300"
+          >
+            ✕ Flatten All
+          </button>
+        )}
+
         {/* History button */}
         {tradeCount > 0 && (
           <button

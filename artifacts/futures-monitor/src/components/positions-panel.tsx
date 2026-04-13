@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle, RotateCcw, ChevronDown } from 'lucide-react';
 import { KNOWN_SYMBOLS } from '@/components/symbol-selector';
-import { type Position, type AccountSettings, pnlDollars, pnlPoints } from '@/hooks/use-positions';
+import { type Position, type AccountSettings, pnlDollars, pnlPoints, netPnlDollars, totalFees } from '@/hooks/use-positions';
 
 const POINT_VALUE: Record<string, number> = Object.fromEntries(KNOWN_SYMBOLS.map(s => [s.display, s.pointValue]));
 
@@ -151,6 +151,10 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
         <EditableNumber value={acct.drawdownPct} onChange={v => onUpdate({ drawdownPct: Math.max(0.1, Math.min(50, v)) })} suffix="%" step={0.5} min={0.1} decimals={1} />
         <span className="text-white/25">= {fmtMoney(-maxLoss)}</span>
       </div>
+      <div className="flex items-center gap-1.5 text-white/40" title="Per-contract per-side commission (exchange + NFA + clearing). $0.37 = typical CME micro rate.">
+        <span className="text-[10px] uppercase tracking-widest text-white/20">Fee/side</span>
+        <EditableNumber value={acct.feePerSide} onChange={v => onUpdate({ feePerSide: Math.max(0, v) })} prefix="$" step={0.01} min={0} decimals={2} />
+      </div>
       {acct.realizedPnl !== 0 && (
         <div className={cn('flex items-center gap-1.5', acct.realizedPnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
           <span className="text-[10px] uppercase tracking-widest text-white/20">Realized</span>
@@ -198,9 +202,10 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
 }
 
 // ── Position card ─────────────────────────────────────────────────────────────
-function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
+function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
   pos: Position;
   px: number | null;
+  feePerSide: number;
   onClose: () => void;
   onUpdate: (patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
   onScaleIn: (addQty: number, addPrice: number) => void;
@@ -226,25 +231,31 @@ function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
     setAddingMore(false);
   }
 
-  const has    = px != null;
-  const pnl    = has ? pnlDollars(pos, px!) : null;
-  const pts    = has ? pnlPoints(pos, px!) : null;
-  const win    = pnl !== null && pnl >= 0;
-  const slPnl  = pos.sl != null ? pnlDollars(pos, pos.sl) : null;
-  const tpPnl  = pos.tp != null ? pnlDollars(pos, pos.tp) : null;
+  const has        = px != null;
+  const grossPnl   = has ? pnlDollars(pos, px!) : null;
+  const netPnl     = has ? netPnlDollars(pos, px!, feePerSide) : null;
+  const pts        = has ? pnlPoints(pos, px!) : null;
+  const roundFees  = totalFees(pos, feePerSide);   // projected total fees at close
+  const win        = netPnl !== null && netPnl >= 0;
 
-  // Weighted-average preview during add-more form
-  const previewEntry = (() => {
+  // SL/TP badges show net P&L at that level
+  const slNet  = pos.sl != null ? pnlDollars(pos, pos.sl)  - roundFees : null;
+  const tpNet  = pos.tp != null ? pnlDollars(pos, pos.tp)  - roundFees : null;
+
+  // Weighted-average + new fee preview during add-more form
+  const addPreview = (() => {
     const q = Math.max(1, parseInt(addQty, 10) || 1);
     const p = parseFloat(addPrice);
     if (isNaN(p)) return null;
-    return (pos.entry * pos.qty + p * q) / (pos.qty + q);
+    const avgEntry   = (pos.entry * pos.qty + p * q) / (pos.qty + q);
+    const newEntryFees = pos.entryFees + feePerSide * q;
+    return { avgEntry, newEntryFees };
   })();
 
   return (
     <div className={cn(
       'group flex flex-col gap-2 rounded-lg px-4 py-3 border text-xs font-mono',
-      win ? 'bg-emerald-950/30 border-emerald-500/20' : pnl !== null ? 'bg-purple-950/20 border-purple-500/15' : 'bg-white/3 border-white/8'
+      win ? 'bg-emerald-950/30 border-emerald-500/20' : netPnl !== null ? 'bg-purple-950/20 border-purple-500/15' : 'bg-white/3 border-white/8'
     )}>
       <div className="flex items-center gap-4 flex-wrap">
         <div className="flex flex-col gap-0.5 min-w-[56px]">
@@ -263,10 +274,14 @@ function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
             <span className="text-white/70">{px!.toFixed(2)}</span>
           </div>
         )}
-        {pnl !== null && pts !== null && (
+        {netPnl !== null && pts !== null && grossPnl !== null && (
           <div className={cn('flex flex-col gap-0.5 text-right ml-auto', win ? 'text-emerald-400' : 'text-purple-400')}>
-            <span className="text-[10px] opacity-50">{pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts</span>
-            <span className="font-bold text-base tabular-nums">{fmtMoney(pnl, true)}</span>
+            <span className="text-[10px] opacity-50 tabular-nums">
+              {pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts
+              <span className="text-white/20 ml-1.5">gross {fmtMoney(grossPnl, true)}</span>
+            </span>
+            <span className="font-bold text-base tabular-nums">{fmtMoney(netPnl, true)}</span>
+            <span className="text-[9px] text-white/20 tabular-nums">−{fmtMoney(roundFees)} fees</span>
           </div>
         )}
         <span className="text-white/15 text-[10px]">{elapsed(pos.openedAt)}</span>
@@ -291,8 +306,11 @@ function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
             onChange={e => setAddPrice(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setAddingMore(false); }}
             className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
-          {previewEntry !== null && (
-            <span className="text-white/30 text-[10px]">→ avg <span className="text-cyan-400">{previewEntry.toFixed(2)}</span></span>
+          {addPreview !== null && (
+            <span className="text-white/30 text-[10px]">
+              → avg <span className="text-cyan-400">{addPreview.avgEntry.toFixed(2)}</span>
+              <span className="text-white/20 ml-1.5">entry fees −{fmtMoney(addPreview.newEntryFees)}</span>
+            </span>
           )}
           <button onClick={commitAddMore} className="px-2.5 py-0.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono rounded transition-colors">Confirm</button>
           <button onClick={() => setAddingMore(false)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
@@ -301,8 +319,8 @@ function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
 
       <div className="flex items-center gap-2">
         <span className="text-white/20 text-[10px] mr-1">Levels:</span>
-        <LevelBadge label="SL" price={pos.sl} color="red" pnl={slPnl} onSet={v => onUpdate({ sl: v })} onClear={() => onUpdate({ sl: null })} />
-        <LevelBadge label="TP" price={pos.tp} color="green" pnl={tpPnl} onSet={v => onUpdate({ tp: v })} onClear={() => onUpdate({ tp: null })} />
+        <LevelBadge label="SL" price={pos.sl} color="red" pnl={slNet} onSet={v => onUpdate({ sl: v })} onClear={() => onUpdate({ sl: null })} />
+        <LevelBadge label="TP" price={pos.tp} color="green" pnl={tpNet} onSet={v => onUpdate({ tp: v })} onClear={() => onUpdate({ tp: null })} />
         <span className="text-white/10 text-[9px] ml-auto">drag lines on chart to adjust</span>
       </div>
     </div>
@@ -338,7 +356,7 @@ function AddTradeForm({ currentPrices, onAdd, onClose }: {
   const px = currentPrices[sym];
   const e2 = parseFloat(entry);
   const preview = !isNaN(e2) && px != null
-    ? pnlDollars({ id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty) || 1), entry: e2, openedAt: 0, sl: null, tp: null }, px)
+    ? pnlDollars({ id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty) || 1), entry: e2, openedAt: 0, sl: null, tp: null, entryFees: 0 }, px)
     : null;
 
   return (
@@ -490,6 +508,7 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
                   key={pos.id}
                   pos={pos}
                   px={currentPrices[pos.symbol] ?? null}
+                  feePerSide={acct.feePerSide}
                   onClose={() => onClosePosition(pos.id)}
                   onUpdate={patch => onUpdatePosition(pos.id, patch)}
                   onScaleIn={(addQty, addPrice) => onScaleIn(pos.id, addQty, addPrice)}
@@ -506,21 +525,34 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
             <div className="text-center text-white/20 text-xs font-mono py-8">No closed trades yet</div>
           ) : (
             <div className="space-y-1">
-              {[...acct.closedTrades].reverse().map(t => (
-                <div key={t.id} className={cn(
-                  'flex items-center gap-4 px-4 py-2.5 rounded-md border text-xs font-mono',
-                  t.pnl >= 0 ? 'bg-emerald-950/20 border-emerald-500/15' : 'bg-purple-950/15 border-purple-500/10'
-                )}>
-                  <span className="text-white/40 min-w-[36px]">{t.symbol}</span>
-                  <span className={t.side === 'L' ? 'text-emerald-400/70' : 'text-purple-400/70'}>{t.side === 'L' ? '▲ Long' : '▼ Short'} {t.qty}×</span>
-                  <span className="text-white/30">{t.entry.toFixed(2)} → {t.exit.toFixed(2)}</span>
-                  <span className="text-white/25 text-[10px]">{((t.exit - t.entry) * (t.side === 'L' ? 1 : -1) * t.qty).toFixed(2)} pts</span>
-                  <span className={cn('font-bold ml-auto tabular-nums text-sm', t.pnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
-                    {fmtMoney(t.pnl, true)}
-                  </span>
-                  <span className="text-white/20 text-[10px]">{new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-              ))}
+              {[...acct.closedTrades].reverse().map(t => {
+                const gross = t.grossPnl ?? t.pnl;
+                const fees  = t.fees ?? 0;
+                const net   = t.pnl;
+                const pts   = ((t.exit - t.entry) * (t.side === 'L' ? 1 : -1) * t.qty);
+                return (
+                  <div key={t.id} className={cn(
+                    'flex items-center gap-4 px-4 py-2.5 rounded-md border text-xs font-mono',
+                    net >= 0 ? 'bg-emerald-950/20 border-emerald-500/15' : 'bg-purple-950/15 border-purple-500/10'
+                  )}>
+                    <span className="text-white/40 min-w-[36px]">{t.symbol}</span>
+                    <span className={t.side === 'L' ? 'text-emerald-400/70' : 'text-purple-400/70'}>{t.side === 'L' ? '▲ Long' : '▼ Short'} {t.qty}×</span>
+                    <span className="text-white/30">{t.entry.toFixed(2)} → {t.exit.toFixed(2)}</span>
+                    <span className="text-white/25 text-[10px]">{pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts</span>
+                    <div className="flex flex-col items-end ml-auto gap-0">
+                      <span className={cn('font-bold tabular-nums text-sm', net >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
+                        {fmtMoney(net, true)}
+                      </span>
+                      {fees > 0 && (
+                        <span className="text-[9px] text-white/20 tabular-nums">
+                          gross {fmtMoney(gross, true)} − fees {fmtMoney(fees)}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-white/20 text-[10px]">{new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                );
+              })}
               {/* Summary row */}
               <div className="flex items-center justify-end gap-3 px-4 pt-2 border-t border-white/5 mt-2">
                 <span className="text-white/25 text-[10px] font-mono">{tradeCount} trades · net</span>

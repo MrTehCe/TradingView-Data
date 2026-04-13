@@ -39,7 +39,7 @@ function parseMessages(data: string): ParsedMessage[] {
           content: JSON.parse(content) as Record<string, unknown>,
         });
       } catch {
-        // ignore parse errors for non-JSON messages
+        // ignore
       }
     }
   }
@@ -72,9 +72,19 @@ export interface TvConnectionStatus {
   error?: string;
 }
 
-const SYMBOL_DISPLAY: Record<string, string> = {
-  "CME_MINI:MNQ1!": "MNQ",
-  "CME_MINI:MES1!": "MES",
+export const SYMBOL_DISPLAY: Record<string, string> = {
+  "CME_MINI:MES1!":  "MES",
+  "CME_MINI:MNQ1!":  "MNQ",
+  "CBOT_MINI:MYM1!": "MYM",
+  "CME_MINI:M2K1!":  "M2K",
+  "CME:ES1!":        "ES",
+  "CME:NQ1!":        "NQ",
+  "CBOT:YM1!":       "YM",
+  "CME:RTY1!":       "RTY",
+  "COMEX:MGC1!":     "MGC",
+  "NYMEX:MCL1!":     "MCL",
+  "CME:MBT1!":       "MBT",
+  "CME:MET1!":       "MET",
 };
 
 const TV_WS_URL =
@@ -83,7 +93,8 @@ const TV_WS_URL =
 export class TradingViewFeed extends EventEmitter {
   private ws: WebSocket | null = null;
   private quoteSession: string;
-  private readonly symbols: string[];
+  private symbols: string[];
+  private pendingSymbols: string[] = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 5000;
   private authToken: string;
@@ -93,7 +104,7 @@ export class TradingViewFeed extends EventEmitter {
 
   constructor(symbols: string[], authToken = "unauthorized_user_token", cookieStr = "") {
     super();
-    this.symbols = symbols;
+    this.symbols = [...symbols];
     this.quoteSession = generateSessionId("qs_");
     this.authToken = authToken;
     this.cookieStr = cookieStr;
@@ -109,6 +120,19 @@ export class TradingViewFeed extends EventEmitter {
 
   setAuthToken(token: string) {
     this.setAuth(token);
+  }
+
+  /** Dynamically add a symbol to the active session (or queue it for when session starts). */
+  addSymbol(tvSymbol: string) {
+    if (this.symbols.includes(tvSymbol)) return;
+    this.symbols.push(tvSymbol);
+
+    if (this.sessionSetup && this.ws?.readyState === WebSocket.OPEN) {
+      this.send(createMessage("quote_add_symbols", [this.quoteSession, tvSymbol]));
+      logger.info({ symbol: tvSymbol }, "Dynamically subscribed to symbol");
+    } else {
+      this.pendingSymbols.push(tvSymbol);
+    }
   }
 
   connect() {
@@ -128,9 +152,7 @@ export class TradingViewFeed extends EventEmitter {
       wsHeaders["Cookie"] = this.cookieStr;
     }
 
-    this.ws = new WebSocket(TV_WS_URL, {
-      headers: wsHeaders,
-    });
+    this.ws = new WebSocket(TV_WS_URL, { headers: wsHeaders });
 
     this.ws.on("open", () => {
       logger.info("TradingView WebSocket open");
@@ -144,6 +166,7 @@ export class TradingViewFeed extends EventEmitter {
 
     this.ws.on("close", (code, reason) => {
       logger.warn({ code, reason: reason.toString() }, "TradingView WS closed");
+      this.sessionSetup = false;
       this.emit("status", { connected: false, authenticated: false });
       this.scheduleReconnect();
     });
@@ -164,8 +187,7 @@ export class TradingViewFeed extends EventEmitter {
     for (const msg of messages) {
       if (msg.type === "heartbeat") {
         const hb = msg.value!;
-        const response = `~m~${hb.length + 3}~m~~h~${hb}`;
-        this.send(response);
+        this.send(`~m~${hb.length + 3}~m~~h~${hb}`);
         continue;
       }
 
@@ -192,37 +214,23 @@ export class TradingViewFeed extends EventEmitter {
     this.quoteSession = generateSessionId("qs_");
     this.send(createMessage("set_auth_token", [this.authToken]));
     this.send(createMessage("quote_create_session", [this.quoteSession]));
-    this.send(
-      createMessage("quote_set_fields", [
-        this.quoteSession,
-        "ch",
-        "chp",
-        "lp",
-        "lp_time",
-        "volume",
-        "high_price",
-        "low_price",
-        "open_price",
-        "prev_close_price",
-        "current_session",
-        "status",
-        "update_mode",
-        "ask",
-        "ask_size",
-        "bid",
-        "bid_size",
-      ])
-    );
+    this.send(createMessage("quote_set_fields", [
+      this.quoteSession,
+      "ch", "chp", "lp", "lp_time", "volume",
+      "high_price", "low_price", "open_price", "prev_close_price",
+      "current_session", "status", "update_mode",
+      "ask", "ask_size", "bid", "bid_size",
+    ]));
 
-    for (const symbol of this.symbols) {
+    const allSymbols = [...new Set([...this.symbols, ...this.pendingSymbols])];
+    this.pendingSymbols = [];
+
+    for (const symbol of allSymbols) {
       this.send(createMessage("quote_add_symbols", [this.quoteSession, symbol]));
     }
 
     this.emit("status", { connected: true, authenticated: true });
-    logger.info(
-      { session: this.quoteSession, symbols: this.symbols },
-      "TradingView quote session ready"
-    );
+    logger.info({ session: this.quoteSession, symbols: allSymbols }, "TradingView quote session ready");
   }
 
   private handleQuoteData(content: Record<string, unknown>) {
@@ -242,31 +250,31 @@ export class TradingViewFeed extends EventEmitter {
     const merged: QuoteData = {
       symbol: symbolKey,
       displaySymbol: SYMBOL_DISPLAY[symbolKey] ?? symbolKey,
-      price: (v["lp"] as number | undefined) ?? prev?.price ?? null,
-      change: (v["ch"] as number | undefined) ?? prev?.change ?? null,
-      changePct: (v["chp"] as number | undefined) ?? prev?.changePct ?? null,
-      volume: (v["volume"] as number | undefined) ?? prev?.volume ?? null,
-      high: (v["high_price"] as number | undefined) ?? prev?.high ?? null,
-      low: (v["low_price"] as number | undefined) ?? prev?.low ?? null,
-      open: (v["open_price"] as number | undefined) ?? prev?.open ?? null,
+      price:     (v["lp"]             as number | undefined) ?? prev?.price     ?? null,
+      change:    (v["ch"]             as number | undefined) ?? prev?.change    ?? null,
+      changePct: (v["chp"]            as number | undefined) ?? prev?.changePct ?? null,
+      volume:    (v["volume"]         as number | undefined) ?? prev?.volume    ?? null,
+      high:      (v["high_price"]     as number | undefined) ?? prev?.high      ?? null,
+      low:       (v["low_price"]      as number | undefined) ?? prev?.low       ?? null,
+      open:      (v["open_price"]     as number | undefined) ?? prev?.open      ?? null,
       prevClose: (v["prev_close_price"] as number | undefined) ?? prev?.prevClose ?? null,
       timestamp: v["lp_time"] ? (v["lp_time"] as number) * 1000 : prev?.timestamp ?? null,
-      session: (v["current_session"] as string | undefined) ?? prev?.session ?? null,
-      ask: (v["ask"] as number | undefined) ?? prev?.ask ?? null,
-      askSize: (v["ask_size"] as number | undefined) ?? prev?.askSize ?? null,
-      bid: (v["bid"] as number | undefined) ?? prev?.bid ?? null,
-      bidSize: (v["bid_size"] as number | undefined) ?? prev?.bidSize ?? null,
+      session:   (v["current_session"] as string | undefined) ?? prev?.session  ?? null,
+      ask:       (v["ask"]            as number | undefined) ?? prev?.ask       ?? null,
+      askSize:   (v["ask_size"]       as number | undefined) ?? prev?.askSize   ?? null,
+      bid:       (v["bid"]            as number | undefined) ?? prev?.bid       ?? null,
+      bidSize:   (v["bid_size"]       as number | undefined) ?? prev?.bidSize   ?? null,
     };
 
     this.quoteSnapshot.set(symbolKey, merged);
 
     if (merged.price !== null) {
-      logger.info(
-        { symbol: symbolKey, status: payload.s, price: merged.price },
-        "TV quote update"
-      );
       this.emit("quote", merged);
     }
+  }
+
+  getSnapshot(): Map<string, QuoteData> {
+    return this.quoteSnapshot;
   }
 
   private send(msg: string) {

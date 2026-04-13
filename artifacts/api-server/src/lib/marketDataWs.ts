@@ -1,9 +1,21 @@
 import { IncomingMessage, Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { TradingViewFeed, type QuoteData, type TvConnectionStatus } from "./tradingview";
+import { TradingViewFeed, type QuoteData, type TvConnectionStatus, SYMBOL_DISPLAY } from "./tradingview";
 import { logger } from "./logger";
 
-const SYMBOLS = ["CME_MINI:MNQ1!", "CME_MINI:MES1!"];
+// Default symbols to subscribe on startup
+const DEFAULT_SYMBOLS = [
+  "CME_MINI:MES1!",   // Micro E-mini S&P 500
+  "CME_MINI:MNQ1!",   // Micro Nasdaq
+  "CBOT_MINI:MYM1!",  // Micro Dow
+  "CME_MINI:M2K1!",   // Micro Russell 2000
+  "CME:ES1!",         // E-mini S&P 500
+  "CME:NQ1!",         // E-mini Nasdaq
+  "COMEX:MGC1!",      // Micro Gold
+  "NYMEX:MCL1!",      // Micro Crude Oil
+  "CME:MBT1!",        // Micro Bitcoin
+  "CME:MET1!",        // Micro Ether
+];
 
 type OutgoingMessage =
   | { type: "quote"; data: QuoteData }
@@ -31,10 +43,10 @@ export function attachMarketDataWs(server: Server) {
     needsLogin: true,
   };
 
-  const feed = new TradingViewFeed(SYMBOLS);
+  const feed = new TradingViewFeed(DEFAULT_SYMBOLS);
 
   feed.on("quote", (quote: QuoteData) => {
-    snapshot[quote.symbol] = quote;
+    snapshot[quote.displaySymbol] = quote;
     broadcast(clients, { type: "quote", data: quote });
   });
 
@@ -61,25 +73,36 @@ export function attachMarketDataWs(server: Server) {
 
     ws.on("message", (raw) => {
       try {
-        const msg = JSON.parse(raw.toString()) as { type: string; token?: string; cookieStr?: string };
+        const msg = JSON.parse(raw.toString()) as {
+          type: string;
+          token?: string;
+          cookieStr?: string;
+          symbol?: string;
+        };
+
         if (msg.type === "set_auth_token" && msg.token) {
           logger.info("TradingView session token received, connecting...");
           feed.setAuth(msg.token, msg.cookieStr ?? "");
           feed.connect();
+        }
+
+        if (msg.type === "subscribe" && msg.symbol) {
+          const tvSymbol = msg.symbol;
+          logger.info({ tvSymbol }, "Client requested symbol subscription");
+          // Register display name if not already known
+          if (!SYMBOL_DISPLAY[tvSymbol]) {
+            const short = tvSymbol.split(":")[1]?.replace("1!", "") ?? tvSymbol;
+            SYMBOL_DISPLAY[tvSymbol] = short;
+          }
+          feed.addSymbol(tvSymbol);
         }
       } catch {
         // ignore malformed messages
       }
     });
 
-    ws.on("close", () => {
-      clients.delete(ws);
-    });
-
-    ws.on("error", (err) => {
-      logger.error({ err }, "WS client error");
-      clients.delete(ws);
-    });
+    ws.on("close", () => { clients.delete(ws); });
+    ws.on("error", (err) => { logger.error({ err }, "WS client error"); clients.delete(ws); });
   });
 
   logger.info("Market data WebSocket server ready at /api/ws");

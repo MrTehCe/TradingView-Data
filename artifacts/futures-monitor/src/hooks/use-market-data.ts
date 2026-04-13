@@ -67,6 +67,12 @@ export function useMarketData() {
     }
   }, []);
 
+  const subscribeSymbol = useCallback((tvSymbol: string) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'subscribe', symbol: tvSymbol }));
+    }
+  }, []);
+
   const connect = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
@@ -130,5 +136,5 @@ export function useMarketData() {
     return () => wsRef.current?.close();
   }, [connect]);
 
-  return { quotes, status, sendToken, tickHistoryRef, orderBookRef };
+  return { quotes, status, sendToken, subscribeSymbol, tickHistoryRef, orderBookRef };
 }

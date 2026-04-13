@@ -1,69 +1,75 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useMarketData } from '@/hooks/use-market-data';
-import { ContractPanel }  from '@/components/contract-panel';
-import { PriceHeatmap }   from '@/components/price-heatmap';
-import { SettingsPanel }  from '@/components/settings-panel';
-import { PositionsPanel } from '@/components/positions-panel';
+import { ContractPanel }    from '@/components/contract-panel';
+import { PriceHeatmap }     from '@/components/price-heatmap';
+import { SettingsPanel }    from '@/components/settings-panel';
+import { PositionsPanel }   from '@/components/positions-panel';
+import { SymbolSelector, KNOWN_SYMBOLS, type SymbolInfo } from '@/components/symbol-selector';
 
-const BUCKET = { MES: 0.5, MNQ: 2.0 } as const;
+const DEFAULT_SYMBOL = KNOWN_SYMBOLS.find(s => s.display === 'MES')!;
 
 export default function TerminalPage() {
-  const { quotes, status, sendToken, tickHistoryRef, orderBookRef } = useMarketData();
+  const { quotes, status, sendToken, tickHistoryRef, orderBookRef, subscribeSymbol } = useMarketData();
+  const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
     return () => document.documentElement.classList.remove('dark');
   }, []);
 
-  const mesData = quotes['MES'] ?? quotes['CME_MINI:MES1!'];
-  const mnqData = quotes['MNQ'] ?? quotes['CME_MINI:MNQ1!'];
+  // Subscribe to the active symbol when it changes
+  useEffect(() => {
+    subscribeSymbol(active.tv);
+  }, [active.tv, subscribeSymbol]);
 
-  const currentPrices = {
-    MES: mesData?.price ?? null,
-    MNQ: mnqData?.price ?? null,
-  };
+  const handleSelect = useCallback((sym: SymbolInfo) => {
+    setActive(sym);
+  }, []);
+
+  // Build a trimmed quotes map for the selector (display → price/changePct)
+  const quoteMap: Record<string, { price: number | null; changePct: number | null }> = {};
+  for (const [key, q] of Object.entries(quotes)) {
+    quoteMap[key] = { price: q.price, changePct: q.changePct };
+  }
+
+  const activeData = quotes[active.display];
+
+  const currentPrices: Record<string, number | null> = {};
+  for (const [key, q] of Object.entries(quotes)) {
+    currentPrices[key] = q.price;
+  }
 
   return (
     <div className="h-screen bg-[#04040a] text-white flex flex-col px-3 pt-2.5 pb-2 font-sans selection:bg-white/20 overflow-hidden">
-      <header className="flex justify-between items-center mb-2 shrink-0">
+      {/* Header */}
+      <header className="flex justify-between items-center mb-2 shrink-0 gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-[11px] font-bold tracking-[0.25em] text-white/30 font-mono uppercase">
+          <span className="text-[11px] font-bold tracking-[0.25em] text-white/25 font-mono uppercase shrink-0">
             Futures
           </span>
-          <span className="h-3 w-px bg-white/10" />
-          <span className="text-[11px] font-mono tracking-wider text-white/20">
-            CME MES · MNQ
-          </span>
+          <span className="h-3 w-px bg-white/10 shrink-0" />
+          <SymbolSelector
+            active={active}
+            onSelect={handleSelect}
+            quotes={quoteMap}
+          />
         </div>
         <SettingsPanel status={status} sendToken={sendToken} />
       </header>
 
+      {/* Account + Positions */}
       <PositionsPanel currentPrices={currentPrices} />
 
-      <div className="flex-1 flex flex-col md:flex-row gap-3 min-h-0 mt-2">
-        <div className="flex-1 flex flex-col gap-2 min-h-0">
-          <ContractPanel symbol="MES" data={mesData} />
-          <PriceHeatmap
-            symbol="MES"
-            currentPrice={mesData?.price ?? null}
-            bucketSize={BUCKET.MES}
-            tickHistoryRef={tickHistoryRef}
-            orderBookRef={orderBookRef}
-          />
-        </div>
-
-        <div className="w-px bg-white/5 self-stretch hidden md:block" />
-
-        <div className="flex-1 flex flex-col gap-2 min-h-0">
-          <ContractPanel symbol="MNQ" data={mnqData} />
-          <PriceHeatmap
-            symbol="MNQ"
-            currentPrice={mnqData?.price ?? null}
-            bucketSize={BUCKET.MNQ}
-            tickHistoryRef={tickHistoryRef}
-            orderBookRef={orderBookRef}
-          />
-        </div>
+      {/* Single chart panel */}
+      <div className="flex-1 flex flex-col gap-2 min-h-0 mt-2">
+        <ContractPanel symbol={active.display} data={activeData} />
+        <PriceHeatmap
+          symbol={active.display}
+          currentPrice={activeData?.price ?? null}
+          bucketSize={active.bucket}
+          tickHistoryRef={tickHistoryRef}
+          orderBookRef={orderBookRef}
+        />
       </div>
 
       {status.needsLogin && status.wsConnected && (

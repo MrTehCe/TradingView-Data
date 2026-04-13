@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle, RotateCcw } from 'lucide-react';
+import { KNOWN_SYMBOLS } from '@/components/symbol-selector';
 
-const POINT_VALUE: Record<string, number> = { MES: 5, MNQ: 2 };
+const POINT_VALUE: Record<string, number> = Object.fromEntries(
+  KNOWN_SYMBOLS.map(s => [s.display, s.pointValue])
+);
 
 export interface Position {
   id: string;
-  symbol: 'MES' | 'MNQ';
+  symbol: string;
   side: 'L' | 'S';
   qty: number;
   entry: number;
@@ -204,7 +207,7 @@ export function PositionsPanel({ currentPrices }: Props) {
   const [acct, setAcct]           = useState<AccountSettings>(loadAcct);
   const [adding, setAdding]       = useState(false);
 
-  const [sym,   setSym]   = useState<'MES' | 'MNQ'>('MES');
+  const [sym,   setSym]   = useState<string>('MES');
   const [side,  setSide]  = useState<'L' | 'S'>('L');
   const [qty,   setQty]   = useState('1');
   const [entry, setEntry] = useState('');
@@ -317,14 +320,15 @@ export function PositionsPanel({ currentPrices }: Props) {
       {/* Add form */}
       {adding && (
         <div className="flex flex-wrap items-center gap-2 mb-2 px-3 py-2 bg-[#0d0d1a] border border-[#222235] rounded-md">
-          <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
-            {(['MES', 'MNQ'] as const).map(s => (
-              <button key={s} onClick={() => setSym(s)}
-                className={cn('px-3 py-1 transition-colors', sym === s ? 'bg-white/10 text-white' : 'text-white/25 hover:text-white/50')}>
-                {s}
-              </button>
+          <select
+            value={sym}
+            onChange={e => setSym(e.target.value)}
+            className="bg-[#0d0d1a] border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs outline-none focus:border-white/30 cursor-pointer"
+          >
+            {KNOWN_SYMBOLS.map(s => (
+              <option key={s.tv} value={s.display}>{s.display} — {s.desc}</option>
             ))}
-          </div>
+          </select>
           <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
             <button onClick={() => setSide('L')} className={cn('px-3 py-1 transition-colors', side === 'L' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-white/25 hover:text-white/50')}>Long</button>
             <button onClick={() => setSide('S')} className={cn('px-3 py-1 transition-colors', side === 'S' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-white/25 hover:text-white/50')}>Short</button>

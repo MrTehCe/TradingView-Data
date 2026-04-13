@@ -42,7 +42,7 @@ export function attachMarketDataWs(server: Server) {
     type: "status",
     connected: false,
     authenticated: false,
-    needsLogin: true,
+    needsLogin: false,   // server never drives the login UI — the tab decides from localStorage
   };
 
   const feed = new TradingViewFeed(DEFAULT_SYMBOLS);

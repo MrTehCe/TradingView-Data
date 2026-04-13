@@ -63,7 +63,7 @@ function getWorker(): SharedWorker | null {
   if (!sharedWorker) {
     sharedWorker = new SharedWorker(
       new URL('../market-worker.ts', import.meta.url),
-      { type: 'module', name: 'market-data-worker' },
+      { type: 'module', name: 'market-data-worker-v3' },
     );
   }
   return sharedWorker;

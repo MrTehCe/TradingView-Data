@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { TickRecord, OBRecord } from '@/hooks/use-market-data';
 import { cn } from '@/lib/utils';
 
@@ -14,7 +14,7 @@ const DEFAULT_ROWS = 50;
 const MIN_ROWS      = 10;
 const MAX_ROWS      = 160;
 const COLS          = 40;
-const LABEL_W       = 62;
+const LABEL_W       = 68;
 const PROFILE_W     = 40;
 const TIME_H        = 18;
 const DELTA_H       = 32;
@@ -52,13 +52,28 @@ interface Props {
 export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef, orderBookRef }: Props) {
   const [win, setWin]             = useState<WindowKey>('5m');
   const [visibleRows, setVisible] = useState(DEFAULT_ROWS);
+  const [isPanning, setIsPanning] = useState(false);
+  const [isPanned, setIsPanned]   = useState(false);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const winRef   = useRef(win);   winRef.current   = win;
-  const priceRef = useRef(currentPrice); priceRef.current = currentPrice;
-  const rowsRef  = useRef(visibleRows);  rowsRef.current  = visibleRows;
+  const winRef    = useRef(win);      winRef.current    = win;
+  const priceRef  = useRef(currentPrice); priceRef.current = currentPrice;
+  const rowsRef   = useRef(visibleRows);  rowsRef.current  = visibleRows;
 
+  // Pan state — offset in price units (positive = view shifted UP)
+  const panOffsetRef  = useRef(0);
+  const dragActiveRef = useRef(false);
+  const dragStartYRef = useRef(0);
+  const dragStartPanRef = useRef(0);
+
+  const resetView = useCallback(() => {
+    setVisible(DEFAULT_ROWS);
+    panOffsetRef.current = 0;
+    setIsPanned(false);
+  }, []);
+
+  // Wheel = zoom rows
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -68,9 +83,54 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       setVisible(p => Math.max(MIN_ROWS, Math.min(MAX_ROWS, p + (e.deltaY > 0 ? step : -step))));
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
-    canvas.addEventListener('dblclick', () => setVisible(DEFAULT_ROWS));
-    return () => { canvas.removeEventListener('wheel', onWheel); };
+    return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
+
+  // Drag = pan price axis
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      dragActiveRef.current   = true;
+      dragStartYRef.current   = e.clientY;
+      dragStartPanRef.current = panOffsetRef.current;
+      setIsPanning(true);
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!dragActiveRef.current) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const gridH    = container.clientHeight - TIME_H - DELTA_H;
+      const cellH    = gridH / rowsRef.current;
+      const dy       = e.clientY - dragStartYRef.current;
+      const rowDelta = dy / cellH;
+      panOffsetRef.current = dragStartPanRef.current + rowDelta * bucketSize;
+      setIsPanned(panOffsetRef.current !== 0);
+    };
+
+    const onUp = () => {
+      if (!dragActiveRef.current) return;
+      dragActiveRef.current = false;
+      setIsPanning(false);
+    };
+
+    const onDblClick = () => resetView();
+
+    canvas.addEventListener('mousedown', onDown);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    canvas.addEventListener('dblclick', onDblClick);
+
+    return () => {
+      canvas.removeEventListener('mousedown', onDown);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      canvas.removeEventListener('dblclick', onDblClick);
+    };
+  }, [bucketSize, resetView]);
 
   useEffect(() => {
     const draw = () => {
@@ -115,16 +175,18 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         return;
       }
 
-      const center   = price ?? allTicks[allTicks.length - 1]?.price ?? 0;
-      const priceMin = center - (ROWS / 2) * bucketSize;
-      const priceMax = priceMin + ROWS * bucketSize;
+      // Center = live price shifted by pan offset (drag up shows higher prices)
+      const rawCenter = price ?? allTicks[allTicks.length - 1]?.price ?? 0;
+      const center    = rawCenter - panOffsetRef.current;
+      const priceMin  = center - (ROWS / 2) * bucketSize;
+      const priceMax  = priceMin + ROWS * bucketSize;
 
       const toX   = (ts: number) => LABEL_W + gridW * (1 - (now - ts) / duration);
       const toY   = (p:  number) => gridH   * (1 - (p - priceMin) / (priceMax - priceMin));
       const toRow = (p:  number) => Math.floor((p - priceMin) / bucketSize);
       const toCol = (ts: number) => Math.min(COLS - 1, Math.max(0, Math.floor((duration - (now - ts)) / bucketMs)));
 
-      // ── 1. Order book heatmap (cyan bid / orange ask) ─────────────────────
+      // ── 1. Order book heatmap ─────────────────────────────────────────────
       if (allOB.length > 0) {
         const obBid = Array.from({ length: ROWS }, () => new Float32Array(COLS));
         const obAsk = Array.from({ length: ROWS }, () => new Float32Array(COLS));
@@ -187,6 +249,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       // ── 3. Grid lines ─────────────────────────────────────────────────────
       ctx.strokeStyle = '#10101a';
       ctx.lineWidth = 0.5;
+      // Horizontal grid every N rows based on density
       const lineEvery = Math.max(1, Math.round(ROWS / 12));
       for (let row = 0; row <= ROWS; row += lineEvery) {
         const y = row * cellH;
@@ -224,30 +287,92 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         drawSphere(ctx, t.x, t.y, BUBBLE_R, t.isUp, Math.max(0.12, fade * 0.92));
       }
 
-      // ── 5. Price axis labels ──────────────────────────────────────────────
-      const labelEvery = Math.max(1, Math.round(ROWS / 10));
-      ctx.font = `${Math.max(7, Math.min(10, cellH * 0.72))}px monospace`;
-      ctx.textAlign = 'right';
-      for (let row = 0; row < ROWS; row += labelEvery) {
-        const p = priceMin + row * bucketSize;
-        ctx.fillStyle = '#2a2a40';
-        ctx.fillText(p.toFixed(bucketSize < 1 ? 2 : 0), LABEL_W - 4, toY(p) + 3.5);
+      // ── 5. Price axis labels (every row, skip if too dense) ───────────────
+      // Determine how often to label: aim for at least 9px between labels
+      const minLabelSpacing = 9;
+      let labelStep = 1;
+      while (cellH * labelStep < minLabelSpacing) labelStep++;
+
+      const decimals = bucketSize < 1 ? 2 : 0;
+      const labelFontSize = Math.max(7.5, Math.min(10.5, cellH * 0.75));
+      ctx.font = `${labelFontSize}px monospace`;
+
+      // Draw label background strip
+      ctx.fillStyle = '#08080f';
+      ctx.fillRect(0, 0, LABEL_W - 1, gridH);
+
+      // Separator line
+      ctx.strokeStyle = '#1a1a28';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(LABEL_W - 1, 0); ctx.lineTo(LABEL_W - 1, gridH); ctx.stroke();
+
+      for (let row = 0; row < ROWS; row += labelStep) {
+        const p  = priceMin + row * bucketSize;
+        const py = toY(p);
+        if (py < 0 || py > gridH) continue;
+
+        // Tick mark
+        ctx.strokeStyle = '#1e1e30';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(LABEL_W - 5, py); ctx.lineTo(LABEL_W - 1, py); ctx.stroke();
+
+        // Label text
+        ctx.fillStyle = '#3a3a5a';
+        ctx.textAlign = 'right';
+        ctx.fillText(p.toFixed(decimals), LABEL_W - 8, py + labelFontSize * 0.38);
       }
 
-      // ── 6. Current price dashed line ──────────────────────────────────────
-      if (price !== null && price >= priceMin && price <= priceMax) {
+      // ── 6. Current price dashed line + label ──────────────────────────────
+      if (price !== null) {
         const py = toY(price);
-        ctx.fillStyle = 'rgba(0,230,118,0.05)';
-        ctx.fillRect(LABEL_W, py - cellH / 2, gridW, cellH);
-        ctx.strokeStyle = '#00e676';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath(); ctx.moveTo(LABEL_W, py); ctx.lineTo(LABEL_W + gridW, py); ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#00e676';
-        ctx.font = 'bold 9px monospace';
-        ctx.textAlign = 'right';
-        ctx.fillText(price.toFixed(bucketSize < 1 ? 2 : 0), LABEL_W - 4, py + 3.5);
+        const inView = py >= 0 && py <= gridH;
+
+        if (inView) {
+          // Highlight band
+          ctx.fillStyle = 'rgba(0,230,118,0.04)';
+          ctx.fillRect(LABEL_W, py - cellH / 2, gridW, cellH);
+          // Dashed line across grid
+          ctx.strokeStyle = '#00e676';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.moveTo(LABEL_W, py); ctx.lineTo(LABEL_W + gridW, py); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Always draw price label on axis — clip to bounds if out of view
+        const clampedPy = Math.max(labelFontSize, Math.min(gridH - 2, inView ? py : (py < 0 ? 2 : gridH - 2)));
+        const labelX = LABEL_W - 2;
+        const labelH2 = labelFontSize + 4;
+        const labelW2 = LABEL_W - 3;
+
+        // Price badge background
+        ctx.fillStyle = inView ? '#00c853' : '#005c25';
+        ctx.beginPath();
+        ctx.roundRect(1, clampedPy - labelH2 / 2, labelW2, labelH2, 3);
+        ctx.fill();
+
+        // Arrow pointing right when in view
+        if (inView) {
+          ctx.fillStyle = '#00c853';
+          ctx.beginPath();
+          ctx.moveTo(labelX, clampedPy - 4);
+          ctx.lineTo(labelX + 5, clampedPy);
+          ctx.lineTo(labelX, clampedPy + 4);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${labelFontSize}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(price.toFixed(decimals), labelW2 / 2 + 1, clampedPy + labelFontSize * 0.35);
+
+        // If out of view, draw an arrow indicator
+        if (!inView) {
+          ctx.fillStyle = '#00e676';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(py < 0 ? '▲' : '▼', LABEL_W + 4, py < 0 ? 12 : gridH - 4);
+        }
       }
 
       // ── 7. Right volume profile ───────────────────────────────────────────
@@ -310,12 +435,15 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         ctx.fillText(label, LABEL_W + col * cellW, gridH + DELTA_H + TIME_H * 0.72);
       }
 
-      // ── 10. Zoom indicator ─────────────────────────────────────────────────
-      if (ROWS !== DEFAULT_ROWS) {
-        ctx.fillStyle = '#444';
-        ctx.font = '9px monospace';
-        ctx.textAlign = 'right';
-        ctx.fillText(`${Math.round((DEFAULT_ROWS / ROWS) * 100)}%`, LABEL_W + gridW - 4, gridH - 4);
+      // ── 10. Status indicators ─────────────────────────────────────────────
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'right';
+      const hints: string[] = [];
+      if (ROWS !== DEFAULT_ROWS) hints.push(`${Math.round((DEFAULT_ROWS / ROWS) * 100)}% zoom`);
+      if (panOffsetRef.current !== 0) hints.push('panned · dbl-click to reset');
+      if (hints.length > 0) {
+        ctx.fillStyle = 'rgba(100,100,140,0.7)';
+        ctx.fillText(hints.join('  ·  '), LABEL_W + gridW - 4, gridH - 4);
       }
     };
 
@@ -335,12 +463,22 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
             {k}
           </button>
         ))}
+        {isPanned && (
+          <button onClick={resetView}
+            className="ml-1 px-2 py-0.5 text-[10px] font-mono rounded text-amber-400/70 hover:text-amber-300 border border-amber-900/40 transition-colors">
+            ⟲ reset
+          </button>
+        )}
         <span className="ml-auto text-[10px] text-muted-foreground/40 font-mono">
-          scroll zoom · dbl reset
+          drag · scroll zoom · dbl reset
         </span>
       </div>
-      <div ref={containerRef} className="flex-1 min-h-0 rounded-lg overflow-hidden border border-[#1a1a28] cursor-crosshair">
-        <canvas ref={canvasRef} className="w-full h-full block" />
+      <div
+        ref={containerRef}
+        className="flex-1 min-h-0 rounded-lg overflow-hidden border border-[#1a1a28]"
+        style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
+      >
+        <canvas ref={canvasRef} className="w-full h-full block" style={{ userSelect: 'none' }} />
       </div>
     </div>
   );

@@ -198,14 +198,33 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
 }
 
 // ── Position card ─────────────────────────────────────────────────────────────
-function PositionCard({ pos, px, onClose, onUpdate }: {
+function PositionCard({ pos, px, onClose, onUpdate, onScaleIn }: {
   pos: Position;
   px: number | null;
   onClose: () => void;
   onUpdate: (patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
+  onScaleIn: (addQty: number, addPrice: number) => void;
 }) {
-  const [, setTick] = useState(0);
+  const [, setTick]        = useState(0);
+  const [addingMore, setAddingMore] = useState(false);
+  const [addQty, setAddQty]         = useState('1');
+  const [addPrice, setAddPrice]     = useState('');
+  const addPriceRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
+
+  function openAddMore() {
+    setAddPrice(px != null ? px.toFixed(2) : pos.entry.toFixed(2));
+    setAddQty('1');
+    setAddingMore(true);
+    setTimeout(() => addPriceRef.current?.select(), 30);
+  }
+  function commitAddMore() {
+    const q = Math.max(1, parseInt(addQty, 10) || 1);
+    const p = parseFloat(addPrice);
+    if (!isNaN(p) && p > 0) onScaleIn(q, p);
+    setAddingMore(false);
+  }
 
   const has    = px != null;
   const pnl    = has ? pnlDollars(pos, px!) : null;
@@ -213,6 +232,14 @@ function PositionCard({ pos, px, onClose, onUpdate }: {
   const win    = pnl !== null && pnl >= 0;
   const slPnl  = pos.sl != null ? pnlDollars(pos, pos.sl) : null;
   const tpPnl  = pos.tp != null ? pnlDollars(pos, pos.tp) : null;
+
+  // Weighted-average preview during add-more form
+  const previewEntry = (() => {
+    const q = Math.max(1, parseInt(addQty, 10) || 1);
+    const p = parseFloat(addPrice);
+    if (isNaN(p)) return null;
+    return (pos.entry * pos.qty + p * q) / (pos.qty + q);
+  })();
 
   return (
     <div className={cn(
@@ -228,7 +255,7 @@ function PositionCard({ pos, px, onClose, onUpdate }: {
         </div>
         <div className="flex flex-col gap-0.5 text-white/40">
           <span className="text-[10px]">{pos.qty}× contracts</span>
-          <span>Entry @ <span className="text-white/60">{pos.entry.toFixed(2)}</span></span>
+          <span>Avg entry @ <span className="text-white/60">{pos.entry.toFixed(2)}</span></span>
         </div>
         {has && (
           <div className="flex flex-col gap-0.5 text-white/40">
@@ -243,11 +270,35 @@ function PositionCard({ pos, px, onClose, onUpdate }: {
           </div>
         )}
         <span className="text-white/15 text-[10px]">{elapsed(pos.openedAt)}</span>
+        <button onClick={openAddMore}
+          className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono border-white/8 text-white/25 hover:text-cyan-400 hover:border-cyan-500/30 transition-all">
+          <Plus className="w-2.5 h-2.5" /> Add
+        </button>
         <button onClick={onClose}
           className="flex items-center gap-1 px-2.5 py-1 rounded border text-[10px] font-mono border-white/10 text-white/30 hover:text-red-400 hover:border-red-500/30 transition-all">
           <X className="w-2.5 h-2.5" /> Close & bank
         </button>
       </div>
+
+      {/* Scale-in form */}
+      {addingMore && (
+        <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-white/8">
+          <span className="text-white/30 text-[10px] shrink-0">Add contracts:</span>
+          <input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)}
+            className="w-12 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
+          <span className="text-white/20 text-[10px]">@ price</span>
+          <input ref={addPriceRef} type="number" step="0.25" value={addPrice}
+            onChange={e => setAddPrice(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setAddingMore(false); }}
+            className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
+          {previewEntry !== null && (
+            <span className="text-white/30 text-[10px]">→ avg <span className="text-cyan-400">{previewEntry.toFixed(2)}</span></span>
+          )}
+          <button onClick={commitAddMore} className="px-2.5 py-0.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono rounded transition-colors">Confirm</button>
+          <button onClick={() => setAddingMore(false)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
+        </div>
+      )}
+
       <div className="flex items-center gap-2">
         <span className="text-white/20 text-[10px] mr-1">Levels:</span>
         <LevelBadge label="SL" price={pos.sl} color="red" pnl={slPnl} onSet={v => onUpdate({ sl: v })} onClear={() => onUpdate({ sl: null })} />
@@ -336,12 +387,13 @@ interface Props {
   positions: Position[];
   acct: AccountSettings;
   onAddPosition: (sym: string, side: 'L' | 'S', qty: number, entry: number) => void;
+  onScaleIn: (id: string, addQty: number, addPrice: number) => void;
   onClosePosition: (id: string) => void;
   onUpdatePosition: (id: string, patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
   onUpdateAcct: (patch: Partial<AccountSettings>) => void;
 }
 
-export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosition, onClosePosition, onUpdatePosition, onUpdateAcct }: Props) {
+export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosition, onScaleIn, onClosePosition, onUpdatePosition, onUpdateAcct }: Props) {
   const [panel, setPanel] = useState<'positions' | 'history' | 'add' | null>(null);
   const close = useCallback(() => setPanel(null), []);
 
@@ -415,14 +467,14 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
               : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white border-white/10 hover:border-white/20'
           )}
         >
-          <Plus className="w-3 h-3" /> Track Trade
+          <Plus className="w-3 h-3" /> Open Position
         </button>
       </div>
 
       {/* ── Floating windows ── */}
 
       {panel === 'add' && (
-        <FloatingWindow title="Track a New Trade" onClose={close}>
+        <FloatingWindow title="Open a New Position" onClose={close}>
           <AddTradeForm currentPrices={currentPrices} onAdd={onAddPosition} onClose={close} />
         </FloatingWindow>
       )}
@@ -440,6 +492,7 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
                   px={currentPrices[pos.symbol] ?? null}
                   onClose={() => onClosePosition(pos.id)}
                   onUpdate={patch => onUpdatePosition(pos.id, patch)}
+                  onScaleIn={(addQty, addPrice) => onScaleIn(pos.id, addQty, addPrice)}
                 />
               ))}
             </div>

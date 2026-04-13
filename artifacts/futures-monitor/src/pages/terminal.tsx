@@ -11,7 +11,7 @@ const DEFAULT_SYMBOL = KNOWN_SYMBOLS.find(s => s.display === 'MES')!;
 
 export default function TerminalPage() {
   const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
-  const { positions, acct, addPosition, closePosition, updatePosition, updateAcct } = usePositions();
+  const { positions, acct, addPosition, scaleIn, closePosition, updatePosition, updateAcct } = usePositions();
   const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
 
   useEffect(() => {
@@ -49,6 +49,7 @@ export default function TerminalPage() {
         positions={positions}
         acct={acct}
         onAddPosition={addPosition}
+        onScaleIn={scaleIn}
         onClosePosition={(id) => closePosition(id, currentPrices[positions.find(p => p.id === id)?.symbol ?? ''] ?? null)}
         onUpdatePosition={updatePosition}
         onUpdateAcct={updateAcct}

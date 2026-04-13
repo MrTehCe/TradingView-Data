@@ -36,7 +36,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS  = 16 * 60 * 1000;
+const MAX_HISTORY_MS  = 4 * 60 * 60 * 1000;   // 4 hours — supports 30m/1H/4H views
 const PERSIST_INTERVAL = 5_000; // save every 5 s
 
 const TOKEN_KEY  = 'fm_tv_auth_v1';

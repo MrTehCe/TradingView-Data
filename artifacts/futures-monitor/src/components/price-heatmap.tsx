@@ -4,10 +4,13 @@ import { type Position, pnlDollars } from '@/hooks/use-positions';
 import { cn } from '@/lib/utils';
 
 const WINDOWS = {
-  '1m':  { duration:  60_000 },
-  '3m':  { duration: 180_000 },
-  '5m':  { duration: 300_000 },
-  '15m': { duration: 900_000 },
+  '1m':  { duration:      60_000 },
+  '3m':  { duration:     180_000 },
+  '5m':  { duration:     300_000 },
+  '15m': { duration:     900_000 },
+  '30m': { duration:   1_800_000 },
+  '1H':  { duration:   3_600_000 },
+  '4H':  { duration:  14_400_000 },
 } as const;
 type WindowKey = keyof typeof WINDOWS;
 

@@ -116,9 +116,23 @@ export function usePositions() {
     });
   }, []);
 
+  /** Add more contracts to an existing position at a new price (weighted-average entry). */
+  const scaleIn = useCallback((id: string, addQty: number, addPrice: number) => {
+    setPositions(prev => {
+      const next = prev.map(p => {
+        if (p.id !== id) return p;
+        const totalQty  = p.qty + addQty;
+        const avgEntry  = (p.entry * p.qty + addPrice * addQty) / totalQty;
+        return { ...p, qty: totalQty, entry: Math.round(avgEntry * 10000) / 10000 };
+      });
+      savePos(next);
+      return next;
+    });
+  }, []);
+
   const updateAcct = useCallback((patch: Partial<AccountSettings>) => {
     setAcct(prev => { const next = { ...prev, ...patch }; saveAcct(next); return next; });
   }, []);
 
-  return { positions, acct, addPosition, closePosition, updatePosition, updateAcct };
+  return { positions, acct, addPosition, scaleIn, closePosition, updatePosition, updateAcct };
 }

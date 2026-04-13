@@ -26,7 +26,8 @@ export interface OBRecord    { ts: number; ask: number; askSize: number; bid: nu
 export type IncomingMessage =
   | { type: 'quote'; data: QuoteData }
   | { type: 'status'; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: 'snapshot'; data: Record<string, QuoteData> };
+  | { type: 'snapshot'; data: Record<string, QuoteData> }
+  | { type: 'history'; symbol: string; ticks: TickRecord[]; ob: OBRecord[] };
 
 export interface MarketStatus {
   connected: boolean;
@@ -188,6 +189,33 @@ export function useMarketData() {
             buf.push(rec);
             orderBookRef.current[sym] = buf.filter(r => r.ts > cutoff);
             (pendingOBRef.current[sym] ??= []).push(rec);
+          }
+
+        } else if (msg.type === 'history') {
+          // Server-side history replay — merge with anything already in memory/IDB
+          const sym    = msg.symbol;
+          const cutoff = Date.now() - MAX_HISTORY_MS;
+
+          if (msg.ticks.length > 0) {
+            const existing = tickHistoryRef.current[sym] ?? [];
+            const merged   = [...msg.ticks, ...existing].filter(t => t.ts > cutoff);
+            merged.sort((a, b) => a.ts - b.ts);
+            // Deduplicate by timestamp
+            tickHistoryRef.current[sym] = merged.filter((t, i) => i === 0 || t.ts !== merged[i - 1].ts);
+            // Stage new-to-us records for IDB
+            const existingTs = new Set(existing.map(t => t.ts));
+            const novel = msg.ticks.filter(t => !existingTs.has(t.ts));
+            if (novel.length > 0) (pendingTicksRef.current[sym] ??= []).push(...novel);
+          }
+
+          if (msg.ob.length > 0) {
+            const existing = orderBookRef.current[sym] ?? [];
+            const merged   = [...msg.ob, ...existing].filter(r => r.ts > cutoff);
+            merged.sort((a, b) => a.ts - b.ts);
+            orderBookRef.current[sym] = merged.filter((r, i) => i === 0 || r.ts !== merged[i - 1].ts);
+            const existingTs = new Set(existing.map(r => r.ts));
+            const novel = msg.ob.filter(r => !existingTs.has(r.ts));
+            if (novel.length > 0) (pendingOBRef.current[sym] ??= []).push(...novel);
           }
 
         } else if (msg.type === 'snapshot') {

@@ -17,10 +17,31 @@ const DEFAULT_SYMBOLS = [
   "CME:MET1!",        // Micro Ether
 ];
 
+const HISTORY_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+interface TickRec { price: number; ts: number; vol: number }
+interface OBRec   { ts: number; ask: number; askSize: number; bid: number; bidSize: number }
+
+// Server-side tick + OB buffers — survive tab closes/opens
+const tickHistory: Record<string, TickRec[]> = {};
+const obHistory:   Record<string, OBRec[]>   = {};
+
+// Prune old records every 30 minutes
+setInterval(() => {
+  const cutoff = Date.now() - HISTORY_MS;
+  for (const sym of Object.keys(tickHistory)) {
+    tickHistory[sym] = tickHistory[sym].filter(t => t.ts > cutoff);
+  }
+  for (const sym of Object.keys(obHistory)) {
+    obHistory[sym] = obHistory[sym].filter(r => r.ts > cutoff);
+  }
+}, 30 * 60 * 1000);
+
 type OutgoingMessage =
   | { type: "quote"; data: QuoteData }
   | { type: "status"; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: "snapshot"; data: Record<string, QuoteData> };
+  | { type: "snapshot"; data: Record<string, QuoteData> }
+  | { type: "history"; symbol: string; ticks: TickRec[]; ob: OBRec[] };
 
 function broadcast(clients: Set<WebSocket>, msg: OutgoingMessage) {
   const payload = JSON.stringify(msg);
@@ -47,6 +68,25 @@ export function attachMarketDataWs(server: Server) {
 
   feed.on("quote", (quote: QuoteData) => {
     snapshot[quote.displaySymbol] = quote;
+
+    // Accumulate server-side history
+    const now    = Date.now();
+    const cutoff = now - HISTORY_MS;
+    const sym    = quote.displaySymbol;
+
+    if (quote.price !== null) {
+      const buf = tickHistory[sym] ?? [];
+      buf.push({ price: quote.price, ts: now, vol: quote.volume ?? 0 });
+      tickHistory[sym] = buf.filter(t => t.ts > cutoff);
+    }
+
+    if (quote.ask !== null && quote.bid !== null &&
+        quote.askSize !== null && quote.bidSize !== null) {
+      const buf = obHistory[sym] ?? [];
+      buf.push({ ts: now, ask: quote.ask, askSize: quote.askSize, bid: quote.bid, bidSize: quote.bidSize });
+      obHistory[sym] = buf.filter(r => r.ts > cutoff);
+    }
+
     broadcast(clients, { type: "quote", data: quote });
   });
 
@@ -89,12 +129,20 @@ export function attachMarketDataWs(server: Server) {
         if (msg.type === "subscribe" && msg.symbol) {
           const tvSymbol = msg.symbol;
           logger.info({ tvSymbol }, "Client requested symbol subscription");
-          // Register display name if not already known
           if (!SYMBOL_DISPLAY[tvSymbol]) {
             const short = tvSymbol.split(":")[1]?.replace("1!", "") ?? tvSymbol;
             SYMBOL_DISPLAY[tvSymbol] = short;
           }
           feed.addSymbol(tvSymbol);
+
+          // Send accumulated history for this symbol immediately
+          const displaySym = SYMBOL_DISPLAY[tvSymbol] ?? tvSymbol;
+          const ticks = tickHistory[displaySym] ?? [];
+          const ob    = obHistory[displaySym]   ?? [];
+          if (ticks.length > 0 || ob.length > 0) {
+            logger.info({ displaySym, ticks: ticks.length, ob: ob.length }, "Sending history to new client");
+            ws.send(JSON.stringify({ type: "history", symbol: displaySym, ticks, ob }));
+          }
         }
       } catch {
         // ignore malformed messages

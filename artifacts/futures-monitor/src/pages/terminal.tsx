@@ -4,8 +4,16 @@ import { ContractPanel }  from '@/components/contract-panel';
 import { PriceHeatmap }   from '@/components/price-heatmap';
 import { SettingsPanel }  from '@/components/settings-panel';
 import { SymbolSelector, KNOWN_SYMBOLS, type SymbolInfo } from '@/components/symbol-selector';
+import { cn } from '@/lib/utils';
 
 const DEFAULT_SYMBOL = KNOWN_SYMBOLS.find(s => s.display === 'MES')!;
+
+const GROUP_DOT: Record<string, string> = {
+  equity: 'bg-cyan-400/60',
+  metals: 'bg-amber-400/60',
+  energy: 'bg-orange-400/60',
+  crypto: 'bg-purple-400/60',
+};
 
 export default function TerminalPage() {
   const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
@@ -16,7 +24,10 @@ export default function TerminalPage() {
     return () => document.documentElement.classList.remove('dark');
   }, []);
 
-  useEffect(() => { subscribeSymbol(active.tv); }, [active.tv, subscribeSymbol]);
+  // Subscribe to ALL known symbols so the strip has live data for all of them
+  useEffect(() => {
+    for (const sym of KNOWN_SYMBOLS) subscribeSymbol(sym.tv);
+  }, [subscribeSymbol]);
 
   const handleSelect = useCallback((sym: SymbolInfo) => setActive(sym), []);
 
@@ -36,6 +47,43 @@ export default function TerminalPage() {
         </div>
         <SettingsPanel status={status} sendToken={sendToken} clearToken={clearToken} />
       </header>
+
+      {/* Multi-symbol strip */}
+      <div className="flex gap-1 mb-2 shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+        {KNOWN_SYMBOLS.map(sym => {
+          const q = quotes[sym.display];
+          const isActive = sym.display === active.display;
+          const pct = q?.changePct ?? null;
+          const isUp = pct !== null && pct >= 0;
+          return (
+            <button
+              key={sym.display}
+              onClick={() => handleSelect(sym)}
+              className={cn(
+                'flex-none flex flex-col items-start px-2 py-1 rounded transition-all border',
+                isActive
+                  ? 'bg-white/8 border-white/20'
+                  : 'bg-white/[0.025] border-white/[0.06] hover:border-white/15 hover:bg-white/[0.05]'
+              )}
+            >
+              <div className="flex items-center gap-1">
+                <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', GROUP_DOT[sym.group])} />
+                <span className="text-[10px] font-bold font-mono text-white/80 tracking-wider">{sym.display}</span>
+              </div>
+              {q?.price != null ? (
+                <span className={cn(
+                  'text-[9px] font-mono tabular-nums mt-0.5',
+                  pct === null ? 'text-white/30' : isUp ? 'text-emerald-400' : 'text-purple-400'
+                )}>
+                  {pct !== null ? `${isUp ? '+' : ''}${pct.toFixed(2)}%` : '—'}
+                </span>
+              ) : (
+                <span className="text-[9px] text-white/15 mt-0.5">—</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Chart */}
       <div className="flex-1 flex flex-col gap-2 min-h-0">

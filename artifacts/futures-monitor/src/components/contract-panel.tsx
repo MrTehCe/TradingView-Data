@@ -24,7 +24,7 @@ export function ContractPanel({
       const dir: FlashDir = newPrice > prev ? 'up' : 'down';
       setFlash(dir);
       if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
-      flashTimerRef.current = setTimeout(() => setFlash(''), 600);
+      flashTimerRef.current = setTimeout(() => setFlash(''), 500);
     }
 
     prevPriceRef.current = newPrice;
@@ -36,86 +36,105 @@ export function ContractPanel({
   if (!data || data.price === null) {
     return (
       <div
-        className="rounded-lg border border-[#222] px-4 py-3 bg-[#111] animate-pulse"
+        className="rounded-md border border-[#1c1c28] px-3 py-2.5 bg-[#0c0c14] animate-pulse"
         data-testid={`panel-${symbol.toLowerCase()}`}
       >
-        <div className="flex items-baseline gap-3 mb-2">
-          <div className="h-5 bg-muted rounded w-12" />
-          <div className="h-8 bg-muted rounded w-32" />
-          <div className="h-4 bg-muted rounded w-20" />
+        <div className="flex items-baseline gap-3 mb-1.5">
+          <div className="h-4 bg-muted rounded w-10" />
+          <div className="h-7 bg-muted rounded w-28" />
+          <div className="h-3 bg-muted rounded w-16" />
         </div>
-        <div className="flex gap-4">
-          <div className="h-3 bg-muted rounded w-20" />
-          <div className="h-3 bg-muted rounded w-16" />
-          <div className="h-3 bg-muted rounded w-16" />
-          <div className="h-3 bg-muted rounded w-16" />
+        <div className="flex gap-3">
+          <div className="h-2.5 bg-muted rounded w-16" />
+          <div className="h-2.5 bg-muted rounded w-12" />
+          <div className="h-2.5 bg-muted rounded w-12" />
         </div>
       </div>
     );
   }
 
   const isPositive = (data.change ?? 0) >= 0;
-  const colorClass = isPositive ? 'text-green-400' : 'text-purple-400';
+  const colorClass = isPositive ? 'text-emerald-400' : 'text-purple-400';
   const flashBg =
     flash === 'up'
-      ? 'bg-green-500/10'
+      ? 'bg-emerald-500/8 border-emerald-500/20'
       : flash === 'down'
-      ? 'bg-purple-500/10'
-      : '';
+      ? 'bg-purple-500/8 border-purple-500/20'
+      : 'border-[#1c1c28]';
+
+  const decimals = symbol === 'MES' ? 2 : 2;
+  const spread = data.ask !== null && data.bid !== null ? (data.ask - data.bid) : null;
 
   return (
     <div
       className={cn(
-        'rounded-lg border border-[#222] px-4 py-3 relative overflow-hidden transition-colors duration-500',
-        flash ? flashBg : 'bg-[#111]'
+        'rounded-md border px-3 py-2.5 relative overflow-hidden transition-colors duration-400',
+        flash ? flashBg : 'bg-[#0c0c14] border-[#1c1c28]'
       )}
       data-testid={`panel-${symbol.toLowerCase()}`}
     >
-      <div className="flex items-baseline gap-3 flex-wrap">
-        <span className="text-lg font-bold tracking-tight text-white">{symbol}</span>
+      <div className="flex items-baseline gap-2.5 flex-wrap">
+        <span className="text-sm font-bold tracking-widest text-white/50 font-mono">{symbol}</span>
         <span
-          className={cn('text-3xl font-mono font-bold tracking-tighter', colorClass)}
+          className={cn('text-2xl font-mono font-bold tracking-tight', colorClass)}
           data-testid={`price-${symbol.toLowerCase()}`}
         >
-          {data.price?.toFixed(2) ?? '---'}
+          {data.price?.toFixed(decimals) ?? '---'}
         </span>
-        <span
-          className={cn('text-sm font-mono font-medium', colorClass)}
-          data-testid={`change-${symbol.toLowerCase()}`}
-        >
-          {isPositive ? '+' : ''}
-          {data.change?.toFixed(2) ?? '-'}
+        <span className={cn('text-xs font-mono', colorClass)} data-testid={`change-${symbol.toLowerCase()}`}>
+          {isPositive ? '+' : ''}{data.change?.toFixed(2) ?? '-'}
         </span>
-        <span className={cn('text-sm font-mono opacity-80', colorClass)}>
-          ({isPositive ? '+' : ''}
-          {data.changePct?.toFixed(2) ?? '-'}%)
+        <span className={cn('text-xs font-mono opacity-75', colorClass)}>
+          ({isPositive ? '+' : ''}{data.changePct?.toFixed(2) ?? '-'}%)
         </span>
-        <span className="ml-auto text-xs text-muted-foreground font-mono shrink-0">
+        <span className="ml-auto text-[10px] text-muted-foreground/50 font-mono shrink-0 tabular-nums">
           {data.timestamp
             ? formatDistanceToNowStrict(data.timestamp, { addSuffix: true })
-            : 'Waiting...'}
+            : '—'}
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1.5 font-mono text-xs">
-        <span className="text-muted-foreground">
-          VOL{' '}
-          <span className="text-white/80" data-testid={`volume-${symbol.toLowerCase()}`}>
-            {data.volume ? new Intl.NumberFormat().format(data.volume) : '-'}
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 font-mono text-[11px]">
+        <span className="text-muted-foreground/60">
+          VOL <span className="text-white/70" data-testid={`volume-${symbol.toLowerCase()}`}>
+            {data.volume ? new Intl.NumberFormat().format(data.volume) : '—'}
           </span>
         </span>
-        <span className="text-muted-foreground">
-          O <span className="text-white/80">{data.open?.toFixed(2) ?? '-'}</span>
+        <span className="text-muted-foreground/60">
+          O <span className="text-white/70">{data.open?.toFixed(decimals) ?? '—'}</span>
         </span>
-        <span className="text-muted-foreground">
-          H <span className="text-green-400/80">{data.high?.toFixed(2) ?? '-'}</span>
+        <span className="text-muted-foreground/60">
+          H <span className="text-emerald-400/80">{data.high?.toFixed(decimals) ?? '—'}</span>
         </span>
-        <span className="text-muted-foreground">
-          L <span className="text-purple-400/80">{data.low?.toFixed(2) ?? '-'}</span>
+        <span className="text-muted-foreground/60">
+          L <span className="text-purple-400/80">{data.low?.toFixed(decimals) ?? '—'}</span>
         </span>
-        <span className="text-muted-foreground">
-          PC <span className="text-white/60">{data.prevClose?.toFixed(2) ?? '-'}</span>
+        <span className="text-muted-foreground/60">
+          PC <span className="text-white/50">{data.prevClose?.toFixed(decimals) ?? '—'}</span>
         </span>
+
+        {/* Bid / Ask / Spread */}
+        {data.bid !== null && data.ask !== null && (
+          <>
+            <span className="border-l border-white/10 pl-3 text-muted-foreground/60">
+              B <span className="text-cyan-400/90">{data.bid.toFixed(decimals)}</span>
+              {data.bidSize !== null && (
+                <span className="text-cyan-400/50 ml-0.5">×{data.bidSize}</span>
+              )}
+            </span>
+            <span className="text-muted-foreground/60">
+              A <span className="text-orange-400/90">{data.ask.toFixed(decimals)}</span>
+              {data.askSize !== null && (
+                <span className="text-orange-400/50 ml-0.5">×{data.askSize}</span>
+              )}
+            </span>
+            {spread !== null && (
+              <span className="text-muted-foreground/40">
+                SPD <span className="text-white/40">{spread.toFixed(decimals)}</span>
+              </span>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

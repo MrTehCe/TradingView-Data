@@ -288,7 +288,6 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       }
 
       // ── 5. Price axis labels (every row, skip if too dense) ───────────────
-      // Determine how often to label: aim for at least 9px between labels
       const minLabelSpacing = 9;
       let labelStep = 1;
       while (cellH * labelStep < minLabelSpacing) labelStep++;
@@ -297,12 +296,12 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       const labelFontSize = Math.max(7.5, Math.min(10.5, cellH * 0.75));
       ctx.font = `${labelFontSize}px monospace`;
 
-      // Draw label background strip
-      ctx.fillStyle = '#08080f';
+      // Label background strip
+      ctx.fillStyle = '#06060d';
       ctx.fillRect(0, 0, LABEL_W - 1, gridH);
 
-      // Separator line
-      ctx.strokeStyle = '#1a1a28';
+      // Separator
+      ctx.strokeStyle = '#141420';
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(LABEL_W - 1, 0); ctx.lineTo(LABEL_W - 1, gridH); ctx.stroke();
 
@@ -312,12 +311,14 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         if (py < 0 || py > gridH) continue;
 
         // Tick mark
-        ctx.strokeStyle = '#1e1e30';
+        ctx.strokeStyle = '#22223a';
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(LABEL_W - 5, py); ctx.lineTo(LABEL_W - 1, py); ctx.stroke();
 
-        // Label text
-        ctx.fillStyle = '#3a3a5a';
+        // Label — brighter base, extra bright near current price
+        const distFromPrice = price !== null ? Math.abs(p - price) / (ROWS * bucketSize) : 1;
+        const labelAlpha = 0.25 + 0.45 * Math.max(0, 1 - distFromPrice * 6);
+        ctx.fillStyle = `rgba(160,160,210,${labelAlpha})`;
         ctx.textAlign = 'right';
         ctx.fillText(p.toFixed(decimals), LABEL_W - 8, py + labelFontSize * 0.38);
       }
@@ -454,28 +455,31 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex items-center gap-1 mb-2 px-0.5">
-        <span className="text-xs text-muted-foreground font-mono mr-1">HEATMAP</span>
+      <div className="flex items-center gap-1 mb-1.5 px-0.5">
         {(Object.keys(WINDOWS) as WindowKey[]).map(k => (
           <button key={k} onClick={() => setWin(k)}
-            className={cn('px-2 py-0.5 text-xs font-mono rounded transition-colors',
-              win === k ? 'bg-white/15 text-white' : 'text-muted-foreground hover:text-white/60')}>
+            className={cn(
+              'px-2.5 py-0.5 text-[11px] font-mono rounded transition-all',
+              win === k
+                ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/25'
+                : 'text-white/25 hover:text-white/50 border border-transparent'
+            )}>
             {k}
           </button>
         ))}
         {isPanned && (
           <button onClick={resetView}
-            className="ml-1 px-2 py-0.5 text-[10px] font-mono rounded text-amber-400/70 hover:text-amber-300 border border-amber-900/40 transition-colors">
-            ⟲ reset
+            className="ml-1 px-2 py-0.5 text-[10px] font-mono rounded text-amber-400/60 hover:text-amber-300 border border-amber-900/30 transition-colors">
+            ⟲
           </button>
         )}
-        <span className="ml-auto text-[10px] text-muted-foreground/40 font-mono">
-          drag · scroll zoom · dbl reset
+        <span className="ml-auto text-[10px] text-white/10 font-mono">
+          drag · scroll · dbl↩
         </span>
       </div>
       <div
         ref={containerRef}
-        className="flex-1 min-h-0 rounded-lg overflow-hidden border border-[#1a1a28]"
+        className="flex-1 min-h-0 rounded-md overflow-hidden border border-[#141420]"
         style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       >
         <canvas ref={canvasRef} className="w-full h-full block" style={{ userSelect: 'none' }} />

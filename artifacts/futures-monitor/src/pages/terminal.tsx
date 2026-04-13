@@ -18,16 +18,22 @@ export default function TerminalPage() {
   const mnqData = quotes['MNQ'] ?? quotes['CME_MINI:MNQ1!'];
 
   return (
-    <div className="h-screen bg-black text-white flex flex-col p-3 md:p-5 font-sans selection:bg-white/20 overflow-hidden">
-      <header className="flex justify-between items-center mb-3 shrink-0">
-        <h1 className="text-lg font-bold tracking-widest text-white/90">
-          FUTURES<span className="text-muted-foreground">MONITOR</span>
-        </h1>
+    <div className="h-screen bg-[#04040a] text-white flex flex-col px-3 pt-2.5 pb-2 font-sans selection:bg-white/20 overflow-hidden">
+      <header className="flex justify-between items-center mb-2 shrink-0">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[11px] font-bold tracking-[0.25em] text-white/30 font-mono uppercase">
+            Futures
+          </span>
+          <span className="h-3 w-px bg-white/10" />
+          <span className="text-[11px] font-mono tracking-wider text-white/20">
+            CME MES · MNQ
+          </span>
+        </div>
         <SettingsPanel status={status} sendToken={sendToken} />
       </header>
 
-      <div className="flex-1 flex flex-col md:flex-row gap-4 md:gap-6 min-h-0">
-        <div className="flex-1 flex flex-col gap-3 min-h-0">
+      <div className="flex-1 flex flex-col md:flex-row gap-3 min-h-0">
+        <div className="flex-1 flex flex-col gap-2 min-h-0">
           <ContractPanel symbol="MES" data={mesData} />
           <PriceHeatmap
             symbol="MES"
@@ -38,7 +44,9 @@ export default function TerminalPage() {
           />
         </div>
 
-        <div className="flex-1 flex flex-col gap-3 min-h-0">
+        <div className="w-px bg-white/5 self-stretch hidden md:block" />
+
+        <div className="flex-1 flex flex-col gap-2 min-h-0">
           <ContractPanel symbol="MNQ" data={mnqData} />
           <PriceHeatmap
             symbol="MNQ"
@@ -51,8 +59,8 @@ export default function TerminalPage() {
       </div>
 
       {status.needsLogin && status.wsConnected && (
-        <p className="mt-2 text-center text-xs text-muted-foreground shrink-0">
-          Click the settings icon to log in and start streaming live MES1! and MNQ1! data.
+        <p className="mt-1.5 text-center text-[11px] text-muted-foreground/40 shrink-0 font-mono">
+          Click the settings icon to log in and start streaming live data.
         </p>
       )}
     </div>

@@ -110,48 +110,51 @@ export function SettingsPanel({
   const isLive = status.authenticated && status.connected;
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2">
+      {/* Status pill */}
       <div
-        className="flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded-full bg-[#111] border border-[#222]"
+        className="flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full bg-[#0e0e18] border border-[#1e1e2e]"
         data-testid="status-connection"
       >
         {isLive ? (
           <>
-            <Wifi className="w-3.5 h-3.5 text-green-500" />
-            <span className="text-green-500/80">Live</span>
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="text-emerald-400/90">Live</span>
           </>
         ) : status.wsConnected && status.needsLogin ? (
           <>
-            <LogIn className="w-3.5 h-3.5 text-yellow-500" />
-            <span className="text-yellow-500/80">Login required</span>
+            <LogIn className="w-3 h-3 text-amber-400" />
+            <span className="text-amber-400/80">Login required</span>
           </>
         ) : status.wsConnected ? (
           <>
-            <Loader2 className="w-3.5 h-3.5 text-yellow-400 animate-spin" />
-            <span className="text-yellow-400/80">Connecting to TV...</span>
+            <Loader2 className="w-3 h-3 text-amber-400 animate-spin" />
+            <span className="text-amber-400/80">Connecting…</span>
           </>
         ) : (
           <>
-            <WifiOff className="w-3.5 h-3.5 text-red-500" />
+            <WifiOff className="w-3 h-3 text-red-500" />
             <span className="text-red-500/80">Disconnected</span>
           </>
         )}
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        className="text-muted-foreground hover:text-white"
+      <button
+        className="text-muted-foreground/50 hover:text-white/80 transition-colors p-1 rounded"
         data-testid="btn-settings"
         onClick={() => setOpen(true)}
+        title="Settings"
       >
-        <Settings className="w-5 h-5" />
-      </Button>
+        <Settings className="w-4 h-4" />
+      </button>
 
       <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm(); }}>
-        <DialogContent className="bg-[#0d0d0d] border-[#222] text-white max-w-md">
+        <DialogContent className="bg-[#0a0a12] border-[#1e1e2e] text-white max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-mono tracking-wide">
+            <DialogTitle className="font-mono tracking-wide text-sm">
               {step === 'credentials' && 'TradingView Login'}
               {step === '2fa' && '2-Factor Verification'}
               {step === 'manual' && 'Session Token'}
@@ -159,19 +162,19 @@ export function SettingsPanel({
             <DialogDescription className="text-muted-foreground text-xs">
               {step === 'credentials' && 'Log in with your TradingView account to stream real-time MNQ1! and MES1! data.'}
               {step === '2fa' && 'Enter the 6-digit code from your authenticator app.'}
-              {step === 'manual' && 'Paste your sessionid cookie value from TradingView\'s DevTools > Application > Cookies.'}
+              {step === 'manual' && "Paste your sessionid cookie value from TradingView's DevTools > Application > Cookies."}
             </DialogDescription>
           </DialogHeader>
 
           {step === 'credentials' && (
             <div className="space-y-4 pt-2">
               <div className="space-y-2">
-                <Label htmlFor="tv-user">Username or Email</Label>
+                <Label htmlFor="tv-user" className="text-xs">Username or Email</Label>
                 <Input
                   id="tv-user"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="bg-black border-[#333] font-mono"
+                  className="bg-black border-[#2a2a3a] font-mono text-sm"
                   placeholder="your@email.com"
                   data-testid="input-username"
                   autoComplete="username"
@@ -179,13 +182,13 @@ export function SettingsPanel({
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tv-pass">Password</Label>
+                <Label htmlFor="tv-pass" className="text-xs">Password</Label>
                 <Input
                   id="tv-pass"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="bg-black border-[#333] font-mono"
+                  className="bg-black border-[#2a2a3a] font-mono text-sm"
                   placeholder="••••••••"
                   data-testid="input-password"
                   autoComplete="current-password"
@@ -195,17 +198,17 @@ export function SettingsPanel({
               {error && <p className="text-xs text-red-400" data-testid="login-error">{error}</p>}
               <div className="flex gap-2 pt-1">
                 <Button
-                  className="flex-1 bg-white text-black hover:bg-gray-200"
+                  className="flex-1 bg-white text-black hover:bg-gray-200 text-sm"
                   onClick={handleLogin}
                   disabled={loading || !username || !password}
                   data-testid="btn-login"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <LogIn className="w-4 h-4 mr-2" />}
-                  {loading ? 'Signing in...' : 'Sign In'}
+                  {loading ? 'Signing in…' : 'Sign In'}
                 </Button>
               </div>
               <button
-                className="text-xs text-muted-foreground hover:text-white w-full text-center pt-1"
+                className="text-xs text-muted-foreground/50 hover:text-white/60 w-full text-center pt-0.5 transition-colors"
                 onClick={() => { setStep('manual'); setError(''); }}
               >
                 Paste session token manually instead
@@ -215,17 +218,17 @@ export function SettingsPanel({
 
           {step === '2fa' && (
             <div className="space-y-4 pt-2">
-              <div className="flex items-center gap-2 text-xs text-yellow-400 bg-yellow-400/10 px-3 py-2 rounded-md border border-yellow-400/20">
+              <div className="flex items-center gap-2 text-xs text-amber-400 bg-amber-400/8 px-3 py-2 rounded-md border border-amber-400/15">
                 <ShieldCheck className="w-4 h-4 shrink-0" />
                 2-factor authentication required
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tv-code">Authenticator Code</Label>
+                <Label htmlFor="tv-code" className="text-xs">Authenticator Code</Label>
                 <Input
                   id="tv-code"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="bg-black border-[#333] font-mono text-center tracking-[0.5em] text-lg"
+                  className="bg-black border-[#2a2a3a] font-mono text-center tracking-[0.5em] text-lg"
                   placeholder="000000"
                   maxLength={6}
                   data-testid="input-2fa-code"
@@ -236,19 +239,19 @@ export function SettingsPanel({
               <div className="flex gap-2">
                 <Button
                   variant="ghost"
-                  className="border border-[#333]"
+                  className="border border-[#2a2a3a] text-sm"
                   onClick={() => { setStep('credentials'); setError(''); setCode(''); }}
                 >
                   Back
                 </Button>
                 <Button
-                  className="flex-1 bg-white text-black hover:bg-gray-200"
+                  className="flex-1 bg-white text-black hover:bg-gray-200 text-sm"
                   onClick={handle2FA}
                   disabled={loading || code.length !== 6}
                   data-testid="btn-verify-2fa"
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  {loading ? 'Verifying...' : 'Verify'}
+                  {loading ? 'Verifying…' : 'Verify'}
                 </Button>
               </div>
             </div>
@@ -257,17 +260,17 @@ export function SettingsPanel({
           {step === 'manual' && (
             <div className="space-y-4 pt-2">
               <div className="space-y-2">
-                <Label htmlFor="tv-token">Session ID (sessionid cookie)</Label>
+                <Label htmlFor="tv-token" className="text-xs">Session ID (sessionid cookie)</Label>
                 <Input
                   id="tv-token"
                   type="password"
                   value={manualToken}
                   onChange={(e) => setManualToken(e.target.value)}
-                  className="bg-black border-[#333] font-mono text-xs"
+                  className="bg-black border-[#2a2a3a] font-mono text-xs"
                   placeholder="Paste sessionid value here"
                   data-testid="input-manual-token"
                 />
-                <p className="text-xs text-muted-foreground/60">
+                <p className="text-xs text-muted-foreground/50">
                   Log into TradingView in Chrome, open DevTools (F12), go to Application &gt; Cookies &gt; tradingview.com, find <code className="bg-black px-1 rounded">sessionid</code> and copy its value.
                 </p>
               </div>
@@ -275,13 +278,13 @@ export function SettingsPanel({
               <div className="flex gap-2">
                 <Button
                   variant="ghost"
-                  className="border border-[#333]"
+                  className="border border-[#2a2a3a] text-sm"
                   onClick={() => { setStep('credentials'); setError(''); }}
                 >
                   Back
                 </Button>
                 <Button
-                  className="flex-1 bg-white text-black hover:bg-gray-200"
+                  className="flex-1 bg-white text-black hover:bg-gray-200 text-sm"
                   onClick={handleManualToken}
                   disabled={!manualToken.trim()}
                   data-testid="btn-save-token"

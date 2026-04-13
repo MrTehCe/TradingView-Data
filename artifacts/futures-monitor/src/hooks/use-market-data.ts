@@ -24,11 +24,9 @@ export interface TickRecord  { price: number; ts: number; vol: number }
 export interface OBRecord    { ts: number; ask: number; askSize: number; bid: number; bidSize: number }
 
 export type IncomingMessage =
-  | { type: 'quote';          data: QuoteData }
-  | { type: 'status';         connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: 'snapshot';       data: Record<string, QuoteData> }
-  | { type: 'history_ticks';  sym: string; data: { ts: number; price: number; vol: number }[] }
-  | { type: 'history_ob';     sym: string; data: { ts: number; ask: number; askSize: number; bid: number; bidSize: number }[] };
+  | { type: 'quote'; data: QuoteData }
+  | { type: 'status'; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
+  | { type: 'snapshot'; data: Record<string, QuoteData> };
 
 export interface MarketStatus {
   connected: boolean;
@@ -39,7 +37,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS   = 12 * 60 * 60 * 1000;  // 12 hours — matches server retention
+const MAX_HISTORY_MS   = 4 * 60 * 60 * 1000;   // 4 hours — supports 1m–4H views
 const FLUSH_INTERVAL   = 5_000;                  // write new records to IDB every 5 s
 const PRUNE_INTERVAL   = 30 * 60 * 1000;        // prune IDB every 30 min
 
@@ -190,32 +188,6 @@ export function useMarketData() {
             buf.push(rec);
             orderBookRef.current[sym] = buf.filter(r => r.ts > cutoff);
             (pendingOBRef.current[sym] ??= []).push(rec);
-          }
-
-        } else if (msg.type === 'history_ticks') {
-          // Server is sending us historical tick data — merge into the in-memory ring
-          const sym    = msg.sym;
-          const cutoff = Date.now() - MAX_HISTORY_MS;
-          const existing = tickHistoryRef.current[sym] ?? [];
-          const existingSet = new Set(existing.map(r => r.ts));
-          const fresh = msg.data.filter(r => r.ts > cutoff && !existingSet.has(r.ts));
-          if (fresh.length > 0) {
-            const merged = [...fresh, ...existing].sort((a, b) => a.ts - b.ts);
-            tickHistoryRef.current[sym] = merged;
-            // Also persist new historical records to IDB
-            appendTicks(sym, fresh).catch(() => {});
-          }
-
-        } else if (msg.type === 'history_ob') {
-          const sym    = msg.sym;
-          const cutoff = Date.now() - MAX_HISTORY_MS;
-          const existing = orderBookRef.current[sym] ?? [];
-          const existingSet = new Set(existing.map(r => r.ts));
-          const fresh = msg.data.filter(r => r.ts > cutoff && !existingSet.has(r.ts));
-          if (fresh.length > 0) {
-            const merged = [...fresh, ...existing].sort((a, b) => a.ts - b.ts);
-            orderBookRef.current[sym] = merged;
-            appendOB(sym, fresh).catch(() => {});
           }
 
         } else if (msg.type === 'snapshot') {

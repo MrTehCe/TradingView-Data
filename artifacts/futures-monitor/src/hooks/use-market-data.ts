@@ -43,32 +43,60 @@ export interface MarketStatus {
   authenticated: boolean;
   needsLogin: boolean;
   wsConnected: boolean;
+  hasSavedToken: boolean;
   error?: string;
 }
 
 const MAX_HISTORY_MS = 16 * 60 * 1000;
+const TOKEN_KEY = 'fm_tv_auth_v1';
+
+interface SavedAuth { token: string; cookieStr: string; savedAt: number }
+
+function loadSavedAuth(): SavedAuth | null {
+  try { return JSON.parse(localStorage.getItem(TOKEN_KEY) ?? 'null'); } catch { return null; }
+}
+function persistAuth(token: string, cookieStr: string) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, cookieStr, savedAt: Date.now() }));
+}
+function clearAuth() { localStorage.removeItem(TOKEN_KEY); }
 
 export function useMarketData() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
+
+  const savedAuth = loadSavedAuth();
   const [status, setStatus] = useState<MarketStatus>({
     connected: false,
     authenticated: false,
-    needsLogin: true,
+    needsLogin: !savedAuth,
     wsConnected: false,
+    hasSavedToken: !!savedAuth,
   });
 
   const wsRef          = useRef<WebSocket | null>(null);
   const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
   const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
+  // Track all symbols the user has subscribed to this session so we can replay on reconnect
+  const subscribedSymbolsRef = useRef<Set<string>>(new Set());
 
+  /** Send token to the server and persist it for future page loads. */
   const sendToken = useCallback((token: string, cookieStr = '') => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    persistAuth(token, cookieStr);
+    setStatus(s => ({ ...s, hasSavedToken: true, needsLogin: false }));
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'set_auth_token', token, cookieStr }));
     }
   }, []);
 
+  /** Remove the saved token (logout). */
+  const clearToken = useCallback(() => {
+    clearAuth();
+    setStatus(s => ({ ...s, hasSavedToken: false, needsLogin: true, authenticated: false }));
+  }, []);
+
+  /** Subscribe to a symbol. Replayed automatically on reconnect. */
   const subscribeSymbol = useCallback((tvSymbol: string) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    subscribedSymbolsRef.current.add(tvSymbol);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'subscribe', symbol: tvSymbol }));
     }
   }, []);
@@ -77,8 +105,26 @@ export function useMarketData() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
 
-    ws.onopen  = () => setStatus(s => ({ ...s, wsConnected: true }));
-    ws.onclose = () => { setStatus(s => ({ ...s, wsConnected: false, connected: false })); setTimeout(connect, 3000); };
+    ws.onopen = () => {
+      setStatus(s => ({ ...s, wsConnected: true }));
+
+      // Auto-replay saved auth token
+      const auth = loadSavedAuth();
+      if (auth) {
+        ws.send(JSON.stringify({ type: 'set_auth_token', token: auth.token, cookieStr: auth.cookieStr }));
+      }
+
+      // Replay any symbols the user had subscribed
+      for (const sym of subscribedSymbolsRef.current) {
+        ws.send(JSON.stringify({ type: 'subscribe', symbol: sym }));
+      }
+    };
+
+    ws.onclose = () => {
+      setStatus(s => ({ ...s, wsConnected: false, connected: false }));
+      setTimeout(connect, 3000);
+    };
+
     ws.onerror = () => setStatus(s => ({ ...s, wsConnected: false }));
 
     ws.onmessage = (event) => {
@@ -119,9 +165,16 @@ export function useMarketData() {
             ...prev,
             connected: msg.connected,
             authenticated: msg.authenticated,
-            needsLogin: msg.needsLogin,
+            // If the server says we need a token but we have one saved, keep needsLogin false
+            // (the token was already sent on open; the server will authenticate momentarily)
+            needsLogin: msg.needsLogin && !loadSavedAuth(),
             error: msg.error,
           }));
+
+          // If the server authenticated us successfully, update needsLogin to false
+          if (msg.authenticated) {
+            setStatus(prev => ({ ...prev, needsLogin: false }));
+          }
         }
       } catch (e) {
         console.error('WS parse error', e);
@@ -136,5 +189,5 @@ export function useMarketData() {
     return () => wsRef.current?.close();
   }, [connect]);
 
-  return { quotes, status, sendToken, subscribeSymbol, tickHistoryRef, orderBookRef };
+  return { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef };
 }

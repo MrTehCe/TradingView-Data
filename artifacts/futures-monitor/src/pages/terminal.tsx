@@ -9,7 +9,7 @@ import { SymbolSelector, KNOWN_SYMBOLS, type SymbolInfo } from '@/components/sym
 const DEFAULT_SYMBOL = KNOWN_SYMBOLS.find(s => s.display === 'MES')!;
 
 export default function TerminalPage() {
-  const { quotes, status, sendToken, tickHistoryRef, orderBookRef, subscribeSymbol } = useMarketData();
+  const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
   const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export default function TerminalPage() {
             quotes={quoteMap}
           />
         </div>
-        <SettingsPanel status={status} sendToken={sendToken} />
+        <SettingsPanel status={status} sendToken={sendToken} clearToken={clearToken} />
       </header>
 
       {/* Account + Positions */}

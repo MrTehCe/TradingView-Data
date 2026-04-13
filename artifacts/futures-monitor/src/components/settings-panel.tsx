@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Settings, Wifi, WifiOff, Loader2, LogIn, ShieldCheck } from 'lucide-react';
+import { Settings, Wifi, WifiOff, Loader2, LogIn, ShieldCheck, LogOut, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,9 +17,11 @@ type LoginStep = 'credentials' | '2fa' | 'manual';
 export function SettingsPanel({
   status,
   sendToken,
+  clearToken,
 }: {
   status: MarketStatus;
   sendToken: (token: string, cookieStr?: string) => void;
+  clearToken: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<LoginStep>('credentials');
@@ -124,6 +126,11 @@ export function SettingsPanel({
             </span>
             <span className="text-emerald-400/90">Live</span>
           </>
+        ) : status.wsConnected && status.hasSavedToken && !status.authenticated ? (
+          <>
+            <Loader2 className="w-3 h-3 text-cyan-400 animate-spin" />
+            <span className="text-cyan-400/80">Authenticating…</span>
+          </>
         ) : status.wsConnected && status.needsLogin ? (
           <>
             <LogIn className="w-3 h-3 text-amber-400" />
@@ -165,6 +172,23 @@ export function SettingsPanel({
               {step === 'manual' && "Paste your sessionid cookie value from TradingView's DevTools > Application > Cookies."}
             </DialogDescription>
           </DialogHeader>
+
+          {/* Saved session notice */}
+          {status.hasSavedToken && step === 'credentials' && (
+            <div className="flex items-center justify-between gap-3 px-3 py-2 bg-cyan-400/5 border border-cyan-400/15 rounded-md mb-2">
+              <div className="flex items-center gap-2 text-xs text-cyan-400/80">
+                <KeyRound className="w-3.5 h-3.5 shrink-0" />
+                <span>Session saved — reconnects automatically on refresh</span>
+              </div>
+              <button
+                onClick={() => { clearToken(); setOpen(false); }}
+                className="flex items-center gap-1 text-[11px] font-mono text-white/25 hover:text-red-400 border border-white/8 hover:border-red-400/30 rounded px-2 py-0.5 transition-colors shrink-0"
+                title="Forget saved session"
+              >
+                <LogOut className="w-3 h-3" /> Forget
+              </button>
+            </div>
+          )}
 
           {step === 'credentials' && (
             <div className="space-y-4 pt-2">

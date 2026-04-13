@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { TickRecord, OBRecord } from '@/hooks/use-market-data';
-import { type Position, pnlDollars } from '@/hooks/use-positions';
 import { cn } from '@/lib/utils';
 
 const WINDOWS = {
@@ -23,7 +22,6 @@ const PROFILE_W     = 40;
 const TIME_H        = 18;
 const DELTA_H       = 32;
 const BUBBLE_R      = 4.5;
-const LEVEL_HIT_PX  = 8;     // pixels within which a level line is "hit"
 
 function drawSphere(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, isUp: boolean, alpha: number) {
   const g = ctx.createRadialGradient(cx - r * 0.32, cy - r * 0.32, r * 0.06, cx, cy, r);
@@ -39,22 +37,17 @@ function drawSphere(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: nu
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
 }
 
-interface Geometry { priceMin: number; priceMax: number; gridH: number; gridW: number }
-
 interface Props {
   symbol: string;
   currentPrice: number | null;
   bucketSize: number;
   tickHistoryRef: React.MutableRefObject<Record<string, TickRecord[]>>;
   orderBookRef:   React.MutableRefObject<Record<string, OBRecord[]>>;
-  positions?: Position[];
-  onUpdatePosition?: (id: string, patch: { sl?: number | null; tp?: number | null }) => void;
 }
 
-export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef, orderBookRef, positions = [], onUpdatePosition }: Props) {
+export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef, orderBookRef }: Props) {
   const [win, setWin]             = useState<WindowKey>('5m');
   const [visibleRows, setVisible] = useState(DEFAULT_ROWS);
-  const [isPanning, setIsPanning] = useState(false);
   const [isPanned, setIsPanned]   = useState(false);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
@@ -64,20 +57,13 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
   const rowsRef   = useRef(visibleRows);  rowsRef.current  = visibleRows;
 
   const panOffsetRef    = useRef(0);
-  const geometryRef     = useRef<Geometry | null>(null);
 
-  // ── Drag state (unified: pan or level) ───────────────────────────────────
-  type LevelDrag = { posId: string; type: 'sl' | 'tp'; draft: number };
-  const dragModeRef  = useRef<'idle' | 'pan' | 'level'>('idle');
-  const levelDragRef = useRef<LevelDrag | null>(null);
-  const panStartYRef = useRef(0);
+  // ── Drag state (pan only) ────────────────────────────────────────────────
+  const isPanningRef   = useRef(false);
+  const panStartYRef   = useRef(0);
   const panStartPanRef = useRef(0);
 
-  // For cursor hover tracking
-  const [cursor, setCursor] = useState<'grab' | 'grabbing' | 'ns-resize'>('grab');
-
-  const positionsRef = useRef(positions);
-  positionsRef.current = positions;
+  const [cursor, setCursor] = useState<'grab' | 'grabbing'>('grab');
 
   const resetView = useCallback(() => {
     setVisible(DEFAULT_ROWS);
@@ -98,103 +84,34 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ── Helpers using geometry ref ───────────────────────────────────────────
-  function levelY(price: number, geo: Geometry): number {
-    return geo.gridH * (1 - (price - geo.priceMin) / (geo.priceMax - geo.priceMin));
-  }
-  function priceFromY(y: number, geo: Geometry): number {
-    return geo.priceMin + (1 - y / geo.gridH) * (geo.priceMax - geo.priceMin);
-  }
-  function snapPrice(p: number): number {
-    return Math.round(p / bucketSize) * bucketSize;
-  }
-
-  // ── Find which level is near a canvas Y ─────────────────────────────────
-  function hitTest(offsetY: number): LevelDrag | null {
-    const geo = geometryRef.current;
-    if (!geo || offsetY > geo.gridH) return null;
-    const symPositions = positionsRef.current.filter(p => p.symbol === symbol);
-    for (const pos of symPositions) {
-      if (pos.sl != null) {
-        const ly = levelY(pos.sl, geo);
-        if (Math.abs(offsetY - ly) <= LEVEL_HIT_PX) return { posId: pos.id, type: 'sl', draft: pos.sl };
-      }
-      if (pos.tp != null) {
-        const ly = levelY(pos.tp, geo);
-        if (Math.abs(offsetY - ly) <= LEVEL_HIT_PX) return { posId: pos.id, type: 'tp', draft: pos.tp };
-      }
-    }
-    return null;
-  }
-
-  // ── Unified mouse events ─────────────────────────────────────────────────
+  // ── Mouse events (pan only) ──────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const onDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
-      const rect = canvas.getBoundingClientRect();
-      const offsetY = e.clientY - rect.top;
-      const hit = hitTest(offsetY);
-      if (hit) {
-        dragModeRef.current  = 'level';
-        levelDragRef.current = hit;
-        e.preventDefault();
-        return;
-      }
-      dragModeRef.current   = 'pan';
+      isPanningRef.current  = true;
       panStartYRef.current  = e.clientY;
       panStartPanRef.current = panOffsetRef.current;
-      setIsPanning(true);
+      setCursor('grabbing');
     };
 
     const onMove = (e: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      const offsetY = e.clientY - rect.top;
-
-      if (dragModeRef.current === 'level') {
-        const geo = geometryRef.current;
-        const drag = levelDragRef.current;
-        if (!geo || !drag) return;
-        drag.draft = snapPrice(priceFromY(offsetY, geo));
-        return;
-      }
-
-      if (dragModeRef.current === 'pan') {
-        const container = containerRef.current;
-        if (!container) return;
-        const gridH2 = container.clientHeight - TIME_H - DELTA_H;
-        const cellH  = gridH2 / rowsRef.current;
-        const dy     = e.clientY - panStartYRef.current;
-        panOffsetRef.current = panStartPanRef.current + (dy / cellH) * bucketSize;
-        setIsPanned(panOffsetRef.current !== 0);
-        return;
-      }
-
-      // Hover: update cursor
-      const hit = hitTest(offsetY);
-      setCursor(hit ? 'ns-resize' : 'grab');
+      if (!isPanningRef.current) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const gridH2 = container.clientHeight - TIME_H - DELTA_H;
+      const cellH  = gridH2 / rowsRef.current;
+      const dy     = e.clientY - panStartYRef.current;
+      panOffsetRef.current = panStartPanRef.current + (dy / cellH) * bucketSize;
+      setIsPanned(panOffsetRef.current !== 0);
     };
 
-    const onUp = (e: MouseEvent) => {
-      if (dragModeRef.current === 'level') {
-        const drag = levelDragRef.current;
-        if (drag && onUpdatePosition) {
-          const rect = canvas.getBoundingClientRect();
-          const offsetY = e.clientY - rect.top;
-          const geo = geometryRef.current;
-          if (geo) drag.draft = snapPrice(priceFromY(offsetY, geo));
-          onUpdatePosition(drag.posId, { [drag.type]: drag.draft });
-        }
-        levelDragRef.current = null;
-        dragModeRef.current  = 'idle';
-        return;
-      }
-      if (dragModeRef.current === 'pan') {
-        dragModeRef.current = 'idle';
-        setIsPanning(false);
-      }
+    const onUp = () => {
+      if (!isPanningRef.current) return;
+      isPanningRef.current = false;
+      setCursor('grab');
     };
 
     const onDblClick = () => resetView();
@@ -209,7 +126,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       window.removeEventListener('mouseup', onUp);
       canvas.removeEventListener('dblclick', onDblClick);
     };
-  }, [bucketSize, resetView, symbol, onUpdatePosition]);
+  }, [bucketSize, resetView]);
 
   // ── Draw loop ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -257,9 +174,6 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       const center    = rawCenter - panOffsetRef.current;
       const priceMin  = center - (ROWS / 2) * bucketSize;
       const priceMax  = priceMin + ROWS * bucketSize;
-
-      // Store geometry for drag hit-testing
-      geometryRef.current = { priceMin, priceMax, gridH, gridW };
 
       const toX   = (ts: number) => LABEL_W + gridW * (1 - (now - ts) / duration);
       const toY   = (p:  number) => gridH   * (1 - (p - priceMin) / (priceMax - priceMin));
@@ -319,12 +233,10 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       for (let col = 0; col <= COLS; col += colEvery) { const x = LABEL_W + col * cellW; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, gridH); ctx.stroke(); }
 
       // ── 4. Price path + bubbles ───────────────────────────────────────────
-      // Zero-tick rule: when price is unchanged, inherit the last real direction
-      // (same as market microstructure uptick/downtick convention)
       interface PlotTick { x: number; y: number; isUp: boolean; age: number }
       const plotTicks: PlotTick[] = [];
       let prevP: number | null = null;
-      let lastDir = true;   // last real direction: true=up, false=down
+      let lastDir = true;
       for (const tick of allTicks) {
         const age = now - tick.ts;
         if (age > duration) { prevP = tick.price; continue; }
@@ -334,7 +246,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         if (prevP === null)            { isUp = true; }
         else if (tick.price > prevP)   { isUp = true;    lastDir = true;  }
         else if (tick.price < prevP)   { isUp = false;   lastDir = false; }
-        else                           { isUp = lastDir; }   // zero-tick
+        else                           { isUp = lastDir; }
         plotTicks.push({ x, y, isUp, age });
         prevP = tick.price;
       }
@@ -350,25 +262,21 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
 
       // ── 4.5. Session VWAP + ±1σ / ±2σ bands ─────────────────────────────
       {
-        // CME Globex session anchor: 23:00 UTC (= 6 pm ET)
         const anchor = (() => {
           const d = new Date(); d.setUTCHours(23, 0, 0, 0);
           if (d.getTime() > now) d.setUTCDate(d.getUTCDate() - 1);
           return d.getTime();
         })();
 
-        // Pull ticks from this session, sorted ascending
         const sTicks = allTicks.filter(t => t.ts >= anchor).sort((a, b) => a.ts - b.ts);
 
         if (sTicks.length >= 3) {
-          // Per-tick delta volume (cumulative field → delta)
           const tVolumes: number[] = [];
           for (let i = 0; i < sTicks.length; i++) {
             const dv = i === 0 ? (sTicks[i].vol || 1) : Math.max(0, sTicks[i].vol - sTicks[i - 1].vol);
-            tVolumes.push(dv > 0 ? dv : 1);   // never zero-weight
+            tVolumes.push(dv > 0 ? dv : 1);
           }
 
-          // Walk columns; for each column boundary accumulate up to that time
           const vwapArr = new Float64Array(COLS + 1).fill(NaN);
           const sdArr   = new Float64Array(COLS + 1).fill(0);
           let cumV = 0, cumPV = 0, cumPV2 = 0, ti2 = 0;
@@ -390,7 +298,6 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
             }
           }
 
-          // Helper: trace a polyline for price offset
           const traceLine = (offset: number) => {
             let started = false;
             for (let col = 0; col <= COLS; col++) {
@@ -404,7 +311,6 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
 
           ctx.save();
 
-          // ±2σ fill
           ctx.beginPath();
           let fs = false;
           for (let col = 0; col <= COLS; col++) {
@@ -420,7 +326,6 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
           ctx.fillStyle = 'rgba(130,80,200,0.05)';
           ctx.fill();
 
-          // ±1σ fill
           ctx.beginPath(); fs = false;
           for (let col = 0; col <= COLS; col++) {
             if (isNaN(vwapArr[col])) { fs = false; continue; }
@@ -435,24 +340,20 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
           ctx.fillStyle = 'rgba(130,80,200,0.09)';
           ctx.fill();
 
-          // ±2σ dashed lines
           ctx.setLineDash([3, 5]); ctx.lineWidth = 0.8;
           ctx.strokeStyle = 'rgba(160,100,230,0.5)';
           ctx.beginPath(); traceLine(+2); ctx.stroke();
           ctx.beginPath(); traceLine(-2); ctx.stroke();
 
-          // ±1σ dashed lines
           ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
           ctx.strokeStyle = 'rgba(160,100,230,0.7)';
           ctx.beginPath(); traceLine(+1); ctx.stroke();
           ctx.beginPath(); traceLine(-1); ctx.stroke();
 
-          // VWAP centre line (solid)
           ctx.setLineDash([]); ctx.lineWidth = 1.5;
           ctx.strokeStyle = 'rgba(200,170,255,0.9)';
           ctx.beginPath(); traceLine(0); ctx.stroke();
 
-          // Right-edge VWAP label
           const lastV = Array.from(vwapArr).reverse().find(v => !isNaN(v));
           if (lastV !== undefined) {
             const vy = Math.max(8, Math.min(gridH - 8, toY(lastV)));
@@ -505,87 +406,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         if (!inView) { ctx.fillStyle = '#00e676'; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(py < 0 ? '▲' : '▼', LABEL_W + 4, py < 0 ? 12 : gridH - 4); }
       }
 
-      // ── 7. Position levels (entry / SL / TP) ─────────────────────────────
-      const symPositions = positionsRef.current.filter(p => p.symbol === symbol);
-      const drag = levelDragRef.current;
-      const lbFont = Math.max(8, Math.min(10, labelFontSize));
-
-      for (const pos of symPositions) {
-        // Get live SL/TP (override with draft during drag)
-        const slPrice = drag?.posId === pos.id && drag.type === 'sl' ? drag.draft : pos.sl;
-        const tpPrice = drag?.posId === pos.id && drag.type === 'tp' ? drag.draft : pos.tp;
-
-        const entryY = toY(pos.entry);
-        const slY    = slPrice != null ? toY(slPrice) : null;
-        const tpY    = tpPrice != null ? toY(tpPrice) : null;
-
-        // Zone fills
-        if (slY !== null && entryY !== null) {
-          const top = Math.min(entryY, slY), h = Math.abs(slY - entryY);
-          ctx.fillStyle = 'rgba(220,50,50,0.06)'; ctx.fillRect(LABEL_W, top, gridW, h);
-        }
-        if (tpY !== null && entryY !== null) {
-          const top = Math.min(entryY, tpY), h = Math.abs(tpY - entryY);
-          ctx.fillStyle = 'rgba(0,200,100,0.06)'; ctx.fillRect(LABEL_W, top, gridW, h);
-        }
-
-        // Entry line
-        if (entryY >= -2 && entryY <= gridH + 2) {
-          ctx.strokeStyle = 'rgba(255,215,50,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 3]);
-          ctx.beginPath(); ctx.moveTo(LABEL_W, entryY); ctx.lineTo(LABEL_W + gridW, entryY); ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // SL line
-        if (slY !== null && slY >= -2 && slY <= gridH + 2) {
-          const isDragging = drag?.posId === pos.id && drag.type === 'sl';
-          ctx.strokeStyle = isDragging ? 'rgba(255,100,100,1)' : 'rgba(255,80,80,0.85)';
-          ctx.lineWidth = isDragging ? 2 : 1.5; ctx.setLineDash([4, 3]);
-          ctx.beginPath(); ctx.moveTo(LABEL_W, slY); ctx.lineTo(LABEL_W + gridW, slY); ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // TP line
-        if (tpY !== null && tpY >= -2 && tpY <= gridH + 2) {
-          const isDragging = drag?.posId === pos.id && drag.type === 'tp';
-          ctx.strokeStyle = isDragging ? 'rgba(50,255,150,1)' : 'rgba(50,220,130,0.85)';
-          ctx.lineWidth = isDragging ? 2 : 1.5; ctx.setLineDash([4, 3]);
-          ctx.beginPath(); ctx.moveTo(LABEL_W, tpY); ctx.lineTo(LABEL_W + gridW, tpY); ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // ── Labels on right edge ──────────────────────────────────────────
-        const rightX = LABEL_W + gridW;
-        const pillW  = PROFILE_W + 2;
-        ctx.font = `bold ${lbFont}px monospace`;
-
-        function drawLevelPill(py: number, txt: string, bg: string, fg: string) {
-          if (py < 0 || py > gridH) return;
-          const ph = lbFont + 5;
-          ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(rightX + 1, py - ph / 2, pillW - 2, ph, 3); ctx.fill();
-          ctx.fillStyle = fg; ctx.textAlign = 'center';
-          ctx.fillText(txt, rightX + 1 + (pillW - 2) / 2, py + lbFont * 0.38);
-        }
-
-        // Entry pill
-        drawLevelPill(entryY, 'ENTRY', 'rgba(180,140,0,0.55)', '#ffe066');
-
-        // SL pill
-        if (slY !== null && slPrice != null) {
-          const slDollars = pnlDollars(pos, slPrice);
-          const slTxt = slDollars >= 0 ? `+${Math.round(slDollars)}` : `${Math.round(slDollars)}`;
-          drawLevelPill(slY, `SL ${slTxt}`, 'rgba(180,30,30,0.55)', '#ff9090');
-        }
-
-        // TP pill
-        if (tpY !== null && tpPrice != null) {
-          const tpDollars = pnlDollars(pos, tpPrice);
-          const tpTxt = tpDollars >= 0 ? `+${Math.round(tpDollars)}` : `${Math.round(tpDollars)}`;
-          drawLevelPill(tpY, `TP ${tpTxt}`, 'rgba(0,120,60,0.55)', '#60ffb0');
-        }
-      }
-
-      // ── 8. Volume profile ─────────────────────────────────────────────────
+      // ── 7. Volume profile ─────────────────────────────────────────────────
       const rowTotals = bgCounts.map(rc => rc.reduce((s, c) => s + c, 0));
       const maxRT = Math.max(1, ...rowTotals);
       const maxPR = PROFILE_W / 2 - 3, profCx = LABEL_W + gridW + PROFILE_W / 2;
@@ -596,7 +417,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         ctx.fillStyle = `rgba(0,${Math.round(120 + 110 * t)},${Math.round(70 + 80 * t)},${0.2 + 0.5 * t})`; ctx.fill();
       }
 
-      // ── 9. Volume delta bars ──────────────────────────────────────────────
+      // ── 8. Volume delta bars ──────────────────────────────────────────────
       const buyVol = new Float64Array(COLS), sellVol = new Float64Array(COLS);
       let prevVol: number | null = null, prevPx: number | null = null;
       for (const tick of allTicks) {
@@ -617,9 +438,9 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         if (sh > 0.5) { ctx.fillStyle = 'rgba(160,50,230,0.75)'; ctx.fillRect(x, deltaBase, w, sh); }
       }
 
-      // ── 10. Time axis (wall-clock timestamps) ────────────────────────────
+      // ── 9. Time axis ──────────────────────────────────────────────────────
       ctx.fillStyle = '#0d0d18'; ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
-      const showSecs = duration <= 300_000;   // show HH:MM:SS for ≤5m, else HH:MM
+      const showSecs = duration <= 300_000;
       const timeFmt: Intl.DateTimeFormatOptions = {
         hour: '2-digit', minute: '2-digit', ...(showSecs ? { second: '2-digit' } : {}),
       };
@@ -629,25 +450,22 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         const label  = ts.toLocaleTimeString([], timeFmt);
         const x      = LABEL_W + col * cellW;
         const isNow  = col === COLS;
-
-        // Slightly brighter for the current-time column
         ctx.fillStyle = isNow ? 'rgba(0,230,118,0.55)' : '#2e2e42';
         ctx.font = isNow ? 'bold 9px monospace' : '9px monospace';
         ctx.textAlign = 'center';
         ctx.fillText(label, x, gridH + DELTA_H + TIME_H * 0.72);
       }
 
-      // ── 11. Status hints ──────────────────────────────────────────────────
+      // ── 10. Status hints ──────────────────────────────────────────────────
       ctx.font = '9px monospace'; ctx.textAlign = 'right';
       const hints: string[] = [];
       if (rowsRef.current !== DEFAULT_ROWS) hints.push(`${Math.round((DEFAULT_ROWS / rowsRef.current) * 100)}% zoom`);
       if (panOffsetRef.current !== 0) hints.push('panned · dbl-click to reset');
-      if (drag) hints.push('dragging level…');
       if (hints.length > 0) { ctx.fillStyle = 'rgba(100,100,140,0.7)'; ctx.fillText(hints.join('  ·  '), LABEL_W + gridW - 4, gridH - 4); }
     };
 
     draw();
-    const id = setInterval(draw, 100);  // faster refresh when dragging
+    const id = setInterval(draw, 100);
     return () => clearInterval(id);
   }, [symbol, bucketSize, tickHistoryRef, orderBookRef]);
 

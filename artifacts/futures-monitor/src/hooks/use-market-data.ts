@@ -24,9 +24,10 @@ export interface TickRecord  { price: number; ts: number; vol: number }
 export interface OBRecord    { ts: number; ask: number; askSize: number; bid: number; bidSize: number }
 
 export type IncomingMessage =
-  | { type: 'quote'; data: QuoteData }
-  | { type: 'status'; connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
-  | { type: 'snapshot'; data: Record<string, QuoteData> };
+  | { type: 'quote';    data: QuoteData }
+  | { type: 'status';   connected: boolean; authenticated: boolean; needsLogin: boolean; error?: string }
+  | { type: 'snapshot'; data: Record<string, QuoteData> }
+  | { type: 'history';  symbol: string; ticks: TickRecord[]; ob: OBRecord[] };
 
 export interface MarketStatus {
   connected: boolean;
@@ -37,9 +38,9 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS   = 12 * 60 * 60 * 1000;  // 12 hours retained — existing views (1m–4H) always have full data
-const FLUSH_INTERVAL   = 5_000;                  // write new records to IDB every 5 s
-const PRUNE_INTERVAL   = 30 * 60 * 1000;        // prune IDB every 30 min
+const MAX_HISTORY_MS   = 12 * 60 * 60 * 1000;
+const FLUSH_INTERVAL   = 5_000;
+const PRUNE_INTERVAL   = 30 * 60 * 1000;
 
 const TOKEN_KEY = 'fm_tv_auth_v1';
 
@@ -52,6 +53,21 @@ function persistAuth(token: string, cookieStr: string) {
   localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, cookieStr, savedAt: Date.now() }));
 }
 function clearAuth() { localStorage.removeItem(TOKEN_KEY); }
+
+// ── SharedWorker singleton ───────────────────────────────────────────────────
+// One SharedWorker instance is shared across all tabs on the same origin.
+// It holds the WebSocket connection and 12h of tick/OB history in memory.
+let sharedWorker: SharedWorker | null = null;
+function getWorker(): SharedWorker | null {
+  if (typeof SharedWorker === 'undefined') return null;
+  if (!sharedWorker) {
+    sharedWorker = new SharedWorker(
+      new URL('../market-worker.ts', import.meta.url),
+      { type: 'module', name: 'market-data-worker' },
+    );
+  }
+  return sharedWorker;
+}
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 export function useMarketData() {
@@ -66,29 +82,27 @@ export function useMarketData() {
     hasSavedToken: !!savedAuth,
   });
 
-  const wsRef          = useRef<WebSocket | null>(null);
-  const tickHistoryRef = useRef<Record<string, TickRecord[]>>({});
-  const orderBookRef   = useRef<Record<string, OBRecord[]>>({});
+  const portRef            = useRef<MessagePort | null>(null);
+  const tickHistoryRef     = useRef<Record<string, TickRecord[]>>({});
+  const orderBookRef       = useRef<Record<string, OBRecord[]>>({});
   const subscribedSymbolsRef = useRef<Set<string>>(new Set());
 
-  // Pending buffers — only records added since last IDB flush
-  const pendingTicksRef = useRef<Record<string, TickRecord[]>>({});
-  const pendingOBRef    = useRef<Record<string, OBRecord[]>>({});
+  const pendingTicksRef    = useRef<Record<string, TickRecord[]>>({});
+  const pendingOBRef       = useRef<Record<string, OBRecord[]>>({});
 
   // ── Load history from IndexedDB on mount ──────────────────────────────────
   useEffect(() => {
     const cutoff = Date.now() - MAX_HISTORY_MS;
     Promise.all([loadTicks(cutoff), loadOB(cutoff)])
       .then(([ticks, ob]) => {
-        // Merge loaded data with any already-arrived live ticks (keep both)
         for (const [sym, arr] of Object.entries(ticks)) {
-          const live = tickHistoryRef.current[sym] ?? [];
+          const live   = tickHistoryRef.current[sym] ?? [];
           const merged = [...arr, ...live];
           merged.sort((a, b) => a.ts - b.ts);
           tickHistoryRef.current[sym] = merged;
         }
         for (const [sym, arr] of Object.entries(ob)) {
-          const live = orderBookRef.current[sym] ?? [];
+          const live   = orderBookRef.current[sym] ?? [];
           const merged = [...arr, ...live];
           merged.sort((a, b) => a.ts - b.ts);
           orderBookRef.current[sym] = merged;
@@ -109,9 +123,8 @@ export function useMarketData() {
       pendingTicksRef.current = {};
       pendingOBRef.current    = {};
     };
-
     const id = setInterval(flush, FLUSH_INTERVAL);
-    return () => { clearInterval(id); flush(); };  // final flush on unmount
+    return () => { clearInterval(id); flush(); };
   }, []);
 
   // ── Prune old IDB records every 30 min ────────────────────────────────────
@@ -125,9 +138,7 @@ export function useMarketData() {
   const sendToken = useCallback((token: string, cookieStr = '') => {
     persistAuth(token, cookieStr);
     setStatus(s => ({ ...s, hasSavedToken: true, needsLogin: false }));
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'set_auth_token', token, cookieStr }));
-    }
+    portRef.current?.postMessage(JSON.stringify({ type: 'set_auth_token', token, cookieStr }));
   }, []);
 
   const clearToken = useCallback(() => {
@@ -138,31 +149,35 @@ export function useMarketData() {
   // ── Symbol subscription ───────────────────────────────────────────────────
   const subscribeSymbol = useCallback((tvSymbol: string) => {
     subscribedSymbolsRef.current.add(tvSymbol);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'subscribe', symbol: tvSymbol }));
-    }
+    portRef.current?.postMessage(JSON.stringify({ type: 'subscribe', symbol: tvSymbol }));
   }, []);
 
-  // ── WebSocket ─────────────────────────────────────────────────────────────
-  const connect = useCallback(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
+  // ── SharedWorker port setup ───────────────────────────────────────────────
+  useEffect(() => {
+    const worker = getWorker();
+    if (!worker) {
+      console.warn('SharedWorker not supported in this browser');
+      return;
+    }
 
-    ws.onopen = () => {
-      setStatus(s => ({ ...s, wsConnected: true }));
-      const auth = loadSavedAuth();
-      if (auth) ws.send(JSON.stringify({ type: 'set_auth_token', token: auth.token, cookieStr: auth.cookieStr }));
-      for (const sym of subscribedSymbolsRef.current) {
-        ws.send(JSON.stringify({ type: 'subscribe', symbol: sym }));
-      }
-    };
+    const port = worker.port;
+    portRef.current = port;
+    setStatus(s => ({ ...s, wsConnected: true }));
 
-    ws.onclose = () => { setStatus(s => ({ ...s, wsConnected: false, connected: false })); setTimeout(connect, 3000); };
-    ws.onerror = () => setStatus(s => ({ ...s, wsConnected: false }));
+    // Send saved auth token to the worker immediately
+    const auth = loadSavedAuth();
+    if (auth) {
+      port.postMessage(JSON.stringify({ type: 'set_auth_token', token: auth.token, cookieStr: auth.cookieStr }));
+    }
 
-    ws.onmessage = (event) => {
+    // Re-send any symbol subscriptions (e.g. after hot-reload)
+    for (const sym of subscribedSymbolsRef.current) {
+      port.postMessage(JSON.stringify({ type: 'subscribe', symbol: sym }));
+    }
+
+    port.onmessage = (event: MessageEvent) => {
       try {
-        const msg = JSON.parse(event.data) as IncomingMessage;
+        const msg = JSON.parse(event.data as string) as IncomingMessage;
 
         if (msg.type === 'quote') {
           setQuotes(prev => ({ ...prev, [msg.data.displaySymbol]: msg.data }));
@@ -173,11 +188,9 @@ export function useMarketData() {
 
           if (msg.data.price !== null) {
             const rec: TickRecord = { price: msg.data.price, ts: now, vol: msg.data.volume ?? 0 };
-            // In-memory ring buffer
             const buf = tickHistoryRef.current[sym] ?? [];
             buf.push(rec);
             tickHistoryRef.current[sym] = buf.filter(t => t.ts > cutoff);
-            // Stage for IDB flush
             (pendingTicksRef.current[sym] ??= []).push(rec);
           }
 
@@ -190,6 +203,36 @@ export function useMarketData() {
             (pendingOBRef.current[sym] ??= []).push(rec);
           }
 
+        } else if (msg.type === 'history') {
+          // Worker is sharing its in-memory accumulation with this new tab
+          const sym    = msg.symbol;
+          const cutoff = Date.now() - MAX_HISTORY_MS;
+
+          if (msg.ticks.length > 0) {
+            const existing   = tickHistoryRef.current[sym] ?? [];
+            const existingTs = new Set(existing.map(t => t.ts));
+            const novel      = msg.ticks.filter(t => !existingTs.has(t.ts) && t.ts > cutoff);
+            if (novel.length > 0) {
+              const merged = [...existing, ...novel];
+              merged.sort((a, b) => a.ts - b.ts);
+              tickHistoryRef.current[sym] = merged;
+              // Stage for IDB so the next flush persists them
+              (pendingTicksRef.current[sym] ??= []).push(...novel);
+            }
+          }
+
+          if (msg.ob.length > 0) {
+            const existing   = orderBookRef.current[sym] ?? [];
+            const existingTs = new Set(existing.map(r => r.ts));
+            const novel      = msg.ob.filter(r => !existingTs.has(r.ts) && r.ts > cutoff);
+            if (novel.length > 0) {
+              const merged = [...existing, ...novel];
+              merged.sort((a, b) => a.ts - b.ts);
+              orderBookRef.current[sym] = merged;
+              (pendingOBRef.current[sym] ??= []).push(...novel);
+            }
+          }
+
         } else if (msg.type === 'snapshot') {
           const snap: Record<string, QuoteData> = {};
           for (const q of Object.values(msg.data)) snap[q.displaySymbol] = q;
@@ -198,25 +241,24 @@ export function useMarketData() {
         } else if (msg.type === 'status') {
           setStatus(prev => ({
             ...prev,
-            connected: msg.connected,
+            connected:     msg.connected,
             authenticated: msg.authenticated,
-            needsLogin: msg.needsLogin && !loadSavedAuth(),
-            error: msg.error,
+            needsLogin:    msg.needsLogin && !loadSavedAuth(),
+            error:         msg.error,
+            wsConnected:   true,
           }));
           if (msg.authenticated) {
             setStatus(prev => ({ ...prev, needsLogin: false }));
           }
         }
-      } catch (e) { console.error('WS parse error', e); }
+      } catch (e) { console.error('Worker message parse error', e); }
     };
 
-    wsRef.current = ws;
-  }, []);
+    port.start();
 
-  useEffect(() => {
-    connect();
-    return () => wsRef.current?.close();
-  }, [connect]);
+    // No cleanup: the SharedWorker port stays alive for the life of the tab.
+    // The worker itself keeps running as long as any tab is connected.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef };
 }

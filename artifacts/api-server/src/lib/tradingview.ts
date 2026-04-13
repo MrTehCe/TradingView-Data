@@ -113,8 +113,16 @@ export class TradingViewFeed extends EventEmitter {
   setAuth(token: string, cookieStr = "") {
     this.authToken = token;
     this.cookieStr = cookieStr;
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.close();
+    // Cancel any pending reconnect so it doesn't race with the manual connect() call
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // Terminate silently (no listeners = no close event = no stray scheduleReconnect)
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.terminate();
+      this.ws = null;
     }
   }
 
@@ -136,9 +144,15 @@ export class TradingViewFeed extends EventEmitter {
   }
 
   connect() {
+    // Cancel any stale reconnect timer — caller is taking over
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.removeAllListeners();
       this.ws.terminate();
+      this.ws = null;
     }
 
     logger.info({ url: TV_WS_URL }, "Connecting to TradingView");

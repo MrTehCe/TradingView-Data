@@ -107,12 +107,6 @@ export function attachMarketDataWs(server: Server) {
       ws.send(JSON.stringify({ type: "snapshot", data: snapshot }));
     }
 
-    // Immediately send history for all default symbols so the client
-    // has data even before it explicitly subscribes
-    for (const tvSym of DEFAULT_SYMBOLS) {
-      sendHistory(ws, tvSym);
-    }
-
     ws.on("message", (raw) => {
       try {
         const msg = JSON.parse(raw.toString()) as {

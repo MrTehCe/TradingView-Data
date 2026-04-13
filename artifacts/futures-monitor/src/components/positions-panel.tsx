@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
-import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle } from 'lucide-react';
+import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle, RotateCcw } from 'lucide-react';
 
 const POINT_VALUE: Record<string, number> = { MES: 5, MNQ: 2 };
 
@@ -13,13 +13,26 @@ export interface Position {
   openedAt: number;
 }
 
+interface ClosedTrade {
+  id: string;
+  symbol: string;
+  side: 'L' | 'S';
+  qty: number;
+  entry: number;
+  exit: number;
+  pnl: number;
+  closedAt: number;
+}
+
 interface AccountSettings {
   balance: number;
   drawdownPct: number;
+  realizedPnl: number;
+  closedTrades: ClosedTrade[];
 }
 
 const POS_KEY  = 'fm_positions_v2';
-const ACCT_KEY = 'fm_account_v1';
+const ACCT_KEY = 'fm_account_v2';
 
 function loadPos(): Position[] {
   try { return JSON.parse(localStorage.getItem(POS_KEY) ?? '[]'); } catch { return []; }
@@ -27,8 +40,12 @@ function loadPos(): Position[] {
 function savePos(p: Position[]) { localStorage.setItem(POS_KEY, JSON.stringify(p)); }
 
 function loadAcct(): AccountSettings {
-  try { return JSON.parse(localStorage.getItem(ACCT_KEY) ?? 'null') ?? { balance: 50000, drawdownPct: 2.5 }; }
-  catch { return { balance: 50000, drawdownPct: 2.5 }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(ACCT_KEY) ?? 'null');
+    return saved ?? { balance: 50000, drawdownPct: 2.5, realizedPnl: 0, closedTrades: [] };
+  } catch {
+    return { balance: 50000, drawdownPct: 2.5, realizedPnl: 0, closedTrades: [] };
+  }
 }
 function saveAcct(a: AccountSettings) { localStorage.setItem(ACCT_KEY, JSON.stringify(a)); }
 
@@ -44,128 +61,108 @@ function elapsed(ms: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
-function fmtMoney(n: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
+function fmtMoney(n: number, forceSign = false) {
+  const sign = forceSign && n > 0 ? '+' : '';
+  return sign + new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 }
 
-// ── Editable number field ─────────────────────────────────────────────────────
-function EditableNumber({
-  value, onChange, prefix = '', suffix = '', step = 1, min = 0, decimals = 0,
-}: {
+// ── Editable number ───────────────────────────────────────────────────────────
+function EditableNumber({ value, onChange, prefix = '', suffix = '', step = 1, min = 0, decimals = 0 }: {
   value: number; onChange: (v: number) => void;
   prefix?: string; suffix?: string; step?: number; min?: number; decimals?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [raw, setRaw]         = useState('');
-  const inputRef              = useRef<HTMLInputElement>(null);
+  const ref                   = useRef<HTMLInputElement>(null);
 
-  function start() {
-    setRaw(value.toFixed(decimals));
-    setEditing(true);
-    setTimeout(() => inputRef.current?.select(), 20);
-  }
-  function commit() {
-    const v = parseFloat(raw);
-    if (!isNaN(v) && v >= min) onChange(v);
-    setEditing(false);
-  }
+  function start() { setRaw(value.toFixed(decimals)); setEditing(true); setTimeout(() => ref.current?.select(), 20); }
+  function commit() { const v = parseFloat(raw); if (!isNaN(v) && v >= min) onChange(v); setEditing(false); }
 
-  if (editing) {
-    return (
-      <span className="inline-flex items-center gap-1">
-        {prefix && <span className="text-white/30">{prefix}</span>}
-        <input
-          ref={inputRef}
-          type="number" step={step} min={min} value={raw}
-          onChange={e => setRaw(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-          onBlur={commit}
-          className="w-24 bg-[#111] border border-white/20 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center outline-none"
-        />
-        {suffix && <span className="text-white/30">{suffix}</span>}
-        <button onClick={commit} className="text-emerald-400/60 hover:text-emerald-400 transition-colors">
-          <Check className="w-3 h-3" />
-        </button>
-      </span>
-    );
-  }
+  if (editing) return (
+    <span className="inline-flex items-center gap-1">
+      {prefix && <span className="text-white/30">{prefix}</span>}
+      <input ref={ref} type="number" step={step} min={min} value={raw}
+        onChange={e => setRaw(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        onBlur={commit}
+        className="w-24 bg-[#111] border border-white/20 rounded px-1.5 py-0.5 text-white font-mono text-xs text-center outline-none"
+      />
+      {suffix && <span className="text-white/30">{suffix}</span>}
+      <button onClick={commit} className="text-emerald-400/60 hover:text-emerald-400"><Check className="w-3 h-3" /></button>
+    </span>
+  );
   return (
-    <button
-      onClick={start}
-      className="inline-flex items-center gap-1 group hover:text-white transition-colors"
-      title="Click to edit"
-    >
+    <button onClick={start} className="inline-flex items-center gap-0.5 group hover:text-white transition-colors" title="Click to edit">
       {prefix && <span>{prefix}</span>}
       <span className="border-b border-dashed border-white/15 group-hover:border-white/40">{value.toFixed(decimals)}</span>
       {suffix && <span>{suffix}</span>}
-      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-40 ml-0.5" />
+      <Pencil className="w-2 h-2 opacity-0 group-hover:opacity-40 ml-0.5" />
     </button>
   );
 }
 
 // ── Account bar ───────────────────────────────────────────────────────────────
-function AccountBar({ totalPnl }: { totalPnl: number }) {
-  const [acct, setAcct] = useState<AccountSettings>(loadAcct);
-
-  function update(patch: Partial<AccountSettings>) {
-    setAcct(prev => { const next = { ...prev, ...patch }; saveAcct(next); return next; });
-  }
-
+function AccountBar({ unrealizedPnl, acct, onUpdate }: {
+  unrealizedPnl: number;
+  acct: AccountSettings;
+  onUpdate: (patch: Partial<AccountSettings>) => void;
+}) {
+  const totalPnl     = acct.realizedPnl + unrealizedPnl;
   const maxLoss      = acct.balance * (acct.drawdownPct / 100);
-  const drawdownUsed = Math.max(0, -totalPnl);           // only counts if losing
+  const drawdownUsed = Math.max(0, -totalPnl);
   const remaining    = maxLoss - drawdownUsed;
   const pct          = Math.min(1, drawdownUsed / maxLoss);
   const breached     = remaining <= 0;
   const warning      = pct >= 0.75 && !breached;
+  const currentEquity = acct.balance + totalPnl;
 
-  const barColor = breached ? 'bg-red-500'
-    : warning    ? 'bg-amber-400'
-    :              'bg-emerald-500/70';
+  const barColor = breached ? 'bg-red-500' : warning ? 'bg-amber-400' : 'bg-emerald-500/70';
 
   return (
     <div className={cn(
-      'flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 rounded-md border font-mono text-xs mb-2',
+      'flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-2 rounded-md border font-mono text-xs mb-2',
       breached ? 'bg-red-950/30 border-red-500/30'
       : warning ? 'bg-amber-950/20 border-amber-500/20'
-      :           'bg-[#090910] border-[#181825]'
+      : 'bg-[#090910] border-[#181825]'
     )}>
-      {/* Balance */}
+      {/* Starting balance */}
       <div className="flex items-center gap-1.5 text-white/40">
         <span className="text-[10px] tracking-widest uppercase text-white/20">Account</span>
-        <span className="text-white/70">
-          <EditableNumber
-            value={acct.balance}
-            onChange={v => update({ balance: v })}
-            prefix="$"
-            step={1000}
-            min={1000}
-          />
-        </span>
+        <EditableNumber value={acct.balance} onChange={v => onUpdate({ balance: v })} prefix="$" step={1000} min={1000} />
       </div>
 
       {/* Drawdown % */}
       <div className="flex items-center gap-1.5 text-white/40">
         <span className="text-[10px] uppercase tracking-widest text-white/20">Max DD</span>
-        <EditableNumber
-          value={acct.drawdownPct}
-          onChange={v => update({ drawdownPct: Math.max(0.1, Math.min(50, v)) })}
-          suffix="%"
-          step={0.5}
-          min={0.1}
-          decimals={1}
-        />
-        <span className="text-white/30">= {fmtMoney(-maxLoss)}</span>
+        <EditableNumber value={acct.drawdownPct} onChange={v => onUpdate({ drawdownPct: Math.max(0.1, Math.min(50, v)) })} suffix="%" step={0.5} min={0.1} decimals={1} />
+        <span className="text-white/25">= {fmtMoney(-maxLoss)}</span>
       </div>
 
-      {/* Unrealized P&L */}
-      {totalPnl !== 0 && (
-        <div className={cn('flex items-center gap-1', totalPnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
-          <span className="text-[10px] uppercase tracking-widest text-white/20">Open P&L</span>
-          <span className="font-bold">{totalPnl >= 0 ? '+' : ''}{fmtMoney(totalPnl)}</span>
+      {/* Realized P&L */}
+      {acct.realizedPnl !== 0 && (
+        <div className={cn('flex items-center gap-1.5', acct.realizedPnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
+          <span className="text-[10px] uppercase tracking-widest text-white/20">Realized</span>
+          <span className="font-bold">{fmtMoney(acct.realizedPnl, true)}</span>
         </div>
       )}
 
-      {/* Drawdown used / remaining */}
+      {/* Unrealized */}
+      {unrealizedPnl !== 0 && (
+        <div className={cn('flex items-center gap-1.5', unrealizedPnl >= 0 ? 'text-emerald-400/70' : 'text-purple-400/70')}>
+          <span className="text-[10px] uppercase tracking-widest text-white/20">Open</span>
+          <span>{fmtMoney(unrealizedPnl, true)}</span>
+        </div>
+      )}
+
+      {/* Current equity */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-widest text-white/20">Equity</span>
+        <span className={cn('font-bold', totalPnl > 0 ? 'text-emerald-400' : totalPnl < 0 ? 'text-purple-400' : 'text-white/50')}>
+          {fmtMoney(currentEquity)}
+        </span>
+      </div>
+
+      {/* Buffer + bar */}
       <div className="flex items-center gap-2 ml-auto">
         {breached ? (
           <span className="flex items-center gap-1 text-red-400 font-bold animate-pulse">
@@ -174,22 +171,26 @@ function AccountBar({ totalPnl }: { totalPnl: number }) {
         ) : (
           <span className={cn('text-xs', warning ? 'text-amber-400' : 'text-white/30')}>
             {warning && <AlertTriangle className="w-3 h-3 inline mr-1" />}
-            Buffer: <span className={cn('font-bold', warning ? 'text-amber-300' : 'text-white/60')}>
-              {fmtMoney(remaining)}
-            </span>
+            Buffer: <span className={cn('font-bold', warning ? 'text-amber-300' : 'text-white/60')}>{fmtMoney(remaining)}</span>
           </span>
         )}
-
-        {/* Progress bar */}
-        <div className="w-32 h-2 bg-white/5 rounded-full overflow-hidden border border-white/8">
-          <div
-            className={cn('h-full rounded-full transition-all duration-300', barColor)}
-            style={{ width: `${pct * 100}%` }}
-          />
+        <div className="w-28 h-1.5 bg-white/5 rounded-full overflow-hidden border border-white/8">
+          <div className={cn('h-full rounded-full transition-all duration-300', barColor)} style={{ width: `${pct * 100}%` }} />
         </div>
-        <span className={cn('text-[10px] tabular-nums', breached ? 'text-red-400' : warning ? 'text-amber-400' : 'text-white/25')}>
+        <span className={cn('text-[10px] tabular-nums w-7 text-right', breached ? 'text-red-400' : warning ? 'text-amber-400' : 'text-white/25')}>
           {(pct * 100).toFixed(0)}%
         </span>
+
+        {/* Reset day button */}
+        {(acct.realizedPnl !== 0 || acct.closedTrades.length > 0) && (
+          <button
+            onClick={() => { if (confirm('Reset realized P&L and trade history for a new session?')) onUpdate({ realizedPnl: 0, closedTrades: [] }); }}
+            className="flex items-center gap-1 text-[10px] text-white/20 hover:text-amber-400/70 border border-white/8 hover:border-amber-400/30 rounded px-1.5 py-0.5 transition-colors"
+            title="Reset realized P&L for new session"
+          >
+            <RotateCcw className="w-2.5 h-2.5" /> Reset
+          </button>
+        )}
       </div>
     </div>
   );
@@ -200,6 +201,7 @@ interface Props { currentPrices: Record<string, number | null> }
 
 export function PositionsPanel({ currentPrices }: Props) {
   const [positions, setPositions] = useState<Position[]>(loadPos);
+  const [acct, setAcct]           = useState<AccountSettings>(loadAcct);
   const [adding, setAdding]       = useState(false);
 
   const [sym,   setSym]   = useState<'MES' | 'MNQ'>('MES');
@@ -224,6 +226,10 @@ export function PositionsPanel({ currentPrices }: Props) {
     setTimeout(() => entryRef.current?.select(), 50);
   }, [sym, currentPrices]);
 
+  function updateAcct(patch: Partial<AccountSettings>) {
+    setAcct(prev => { const next = { ...prev, ...patch }; saveAcct(next); return next; });
+  }
+
   function submit() {
     const e = parseFloat(entry);
     const q = Math.max(1, parseInt(qty, 10) || 1);
@@ -233,19 +239,41 @@ export function PositionsPanel({ currentPrices }: Props) {
     setAdding(false);
   }
 
-  function remove(id: string) {
+  // Close position: bank its P&L into realized, record closed trade
+  function closePosition(id: string) {
+    const pos = positions.find(p => p.id === id);
+    if (!pos) return;
+    const px = currentPrices[pos.symbol];
+
     setPositions(prev => { const next = prev.filter(p => p.id !== id); savePos(next); return next; });
+
+    if (px != null) {
+      const tradePnl = pnlDollars(pos, px);
+      const trade: ClosedTrade = {
+        id: Date.now().toString(),
+        symbol: pos.symbol, side: pos.side, qty: pos.qty,
+        entry: pos.entry, exit: px, pnl: tradePnl, closedAt: Date.now(),
+      };
+      setAcct(prev => {
+        const next = {
+          ...prev,
+          realizedPnl: prev.realizedPnl + tradePnl,
+          closedTrades: [...prev.closedTrades, trade],
+        };
+        saveAcct(next);
+        return next;
+      });
+    }
   }
 
-  const totalPnl = positions.reduce((sum, pos) => {
+  const unrealizedPnl = positions.reduce((sum, pos) => {
     const px = currentPrices[pos.symbol];
     return px != null ? sum + pnlDollars(pos, px) : sum;
   }, 0);
 
   return (
     <div className="shrink-0">
-      {/* Account tracker */}
-      <AccountBar totalPnl={totalPnl} />
+      <AccountBar unrealizedPnl={unrealizedPnl} acct={acct} onUpdate={updateAcct} />
 
       {/* Positions header */}
       <div className="flex items-center gap-3 mb-1.5">
@@ -254,12 +282,22 @@ export function PositionsPanel({ currentPrices }: Props) {
         {positions.length > 0 && (
           <div className={cn(
             'flex items-center gap-1.5 px-2 py-0.5 rounded font-mono font-bold text-sm tabular-nums',
-            totalPnl >= 0
+            unrealizedPnl >= 0
               ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
               : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
           )}>
-            {totalPnl >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-            {totalPnl >= 0 ? '+' : ''}{fmtMoney(totalPnl)}
+            {unrealizedPnl >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+            {fmtMoney(unrealizedPnl, true)} open
+          </div>
+        )}
+
+        {/* Closed trade history pill */}
+        {acct.closedTrades.length > 0 && (
+          <div className="flex items-center gap-1 text-[10px] font-mono text-white/25">
+            {acct.closedTrades.length} closed ·
+            <span className={acct.realizedPnl >= 0 ? 'text-emerald-400/70' : 'text-purple-400/70'}>
+              {fmtMoney(acct.realizedPnl, true)} realized
+            </span>
           </div>
         )}
 
@@ -282,43 +320,27 @@ export function PositionsPanel({ currentPrices }: Props) {
           <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
             {(['MES', 'MNQ'] as const).map(s => (
               <button key={s} onClick={() => setSym(s)}
-                className={cn('px-3 py-1 transition-colors',
-                  sym === s ? 'bg-white/10 text-white' : 'text-white/25 hover:text-white/50')}>
+                className={cn('px-3 py-1 transition-colors', sym === s ? 'bg-white/10 text-white' : 'text-white/25 hover:text-white/50')}>
                 {s}
               </button>
             ))}
           </div>
-
           <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
-            <button onClick={() => setSide('L')}
-              className={cn('px-3 py-1 transition-colors',
-                side === 'L' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-white/25 hover:text-white/50')}>
-              Long
-            </button>
-            <button onClick={() => setSide('S')}
-              className={cn('px-3 py-1 transition-colors',
-                side === 'S' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-white/25 hover:text-white/50')}>
-              Short
-            </button>
+            <button onClick={() => setSide('L')} className={cn('px-3 py-1 transition-colors', side === 'L' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-white/25 hover:text-white/50')}>Long</button>
+            <button onClick={() => setSide('S')} className={cn('px-3 py-1 transition-colors', side === 'S' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-white/25 hover:text-white/50')}>Short</button>
           </div>
-
           <label className="flex items-center gap-1.5 text-xs font-mono text-white/30">
             Contracts
-            <input type="number" min="1" value={qty}
-              onChange={e => setQty(e.target.value)}
-              className="w-14 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30"
-            />
+            <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
+              className="w-14 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
           </label>
-
           <label className="flex items-center gap-1.5 text-xs font-mono text-white/30">
             Entry @
             <input ref={entryRef} type="number" step="0.25" value={entry}
               onChange={e => setEntry(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && submit()}
-              className="w-24 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30"
-            />
+              className="w-24 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
           </label>
-
           {(() => {
             const px = currentPrices[sym];
             if (px == null) return null;
@@ -326,21 +348,13 @@ export function PositionsPanel({ currentPrices }: Props) {
             if (isNaN(e2)) return null;
             const fake: Position = { id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty)||1), entry: e2, openedAt: 0 };
             const preview = pnlDollars(fake, px);
-            return (
-              <span className={cn('text-xs font-mono tabular-nums', preview >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
-                now: {preview >= 0 ? '+' : ''}{fmtMoney(preview)}
-              </span>
-            );
+            return <span className={cn('text-xs font-mono tabular-nums', preview >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>now: {fmtMoney(preview, true)}</span>;
           })()}
-
-          <button onClick={submit}
-            className="px-4 py-1 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors ml-1">
-            Add
-          </button>
+          <button onClick={submit} className="px-4 py-1 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors ml-1">Add</button>
         </div>
       )}
 
-      {/* Position rows */}
+      {/* Open position rows */}
       {positions.length > 0 ? (
         <div className="flex flex-wrap gap-2">
           {positions.map(pos => {
@@ -351,13 +365,12 @@ export function PositionsPanel({ currentPrices }: Props) {
             const win = pnl !== null && pnl >= 0;
 
             return (
-              <div key={pos.id}
-                className={cn(
-                  'relative group flex items-center gap-3 rounded-md px-3 py-2 border text-xs font-mono',
-                  win ? 'bg-emerald-950/30 border-emerald-500/20'
-                    : pnl !== null ? 'bg-purple-950/20 border-purple-500/15'
-                    : 'bg-white/3 border-white/8'
-                )}>
+              <div key={pos.id} className={cn(
+                'relative group flex items-center gap-3 rounded-md px-3 py-2 border text-xs font-mono',
+                win ? 'bg-emerald-950/30 border-emerald-500/20'
+                  : pnl !== null ? 'bg-purple-950/20 border-purple-500/15'
+                  : 'bg-white/3 border-white/8'
+              )}>
                 <div className="flex flex-col gap-0.5">
                   <span className="text-white/40 text-[10px] tracking-widest">{pos.symbol}</span>
                   <span className={cn('font-bold text-sm', pos.side === 'L' ? 'text-emerald-400' : 'text-purple-400')}>
@@ -378,13 +391,18 @@ export function PositionsPanel({ currentPrices }: Props) {
                 {pnl !== null && pts !== null && (
                   <div className={cn('flex flex-col gap-0.5 text-right ml-1', win ? 'text-emerald-400' : 'text-purple-400')}>
                     <span className="text-[10px] opacity-50">{pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts</span>
-                    <span className="font-bold text-base tabular-nums">{win ? '+' : ''}{fmtMoney(pnl)}</span>
+                    <span className="font-bold text-base tabular-nums">{fmtMoney(pnl, true)}</span>
                   </div>
                 )}
                 <span className="text-white/15 text-[10px] ml-1">{elapsed(pos.openedAt)}</span>
-                <button onClick={() => remove(pos.id)} title="Remove"
-                  className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 text-white/20 hover:text-red-400 transition-all">
-                  <X className="w-3 h-3" />
+
+                {/* Close button — always visible, banks P&L */}
+                <button
+                  onClick={() => closePosition(pos.id)}
+                  title="Close trade & bank P&L"
+                  className="ml-2 flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-all border-white/10 text-white/30 hover:text-white hover:border-white/30"
+                >
+                  <X className="w-2.5 h-2.5" /> Close
                 </button>
               </div>
             );
@@ -396,6 +414,27 @@ export function PositionsPanel({ currentPrices }: Props) {
           <Plus className="w-3 h-3" /> Click to track a trade and see live P&L
         </div>
       ) : null}
+
+      {/* Closed trades log */}
+      {acct.closedTrades.length > 0 && (
+        <div className="mt-2 space-y-0.5">
+          <div className="text-[10px] font-mono tracking-widest text-white/15 uppercase mb-1">Closed Trades</div>
+          {[...acct.closedTrades].reverse().map(t => (
+            <div key={t.id} className={cn(
+              'flex items-center gap-3 px-2.5 py-1 rounded text-[11px] font-mono border',
+              t.pnl >= 0 ? 'bg-emerald-950/15 border-emerald-500/10' : 'bg-purple-950/10 border-purple-500/8'
+            )}>
+              <span className="text-white/30">{t.symbol}</span>
+              <span className={t.side === 'L' ? 'text-emerald-400/60' : 'text-purple-400/60'}>{t.side === 'L' ? '▲' : '▼'} {t.qty}×</span>
+              <span className="text-white/25">{t.entry.toFixed(2)} → {t.exit.toFixed(2)}</span>
+              <span className={cn('font-bold ml-auto tabular-nums', t.pnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
+                {fmtMoney(t.pnl, true)}
+              </span>
+              <span className="text-white/15 text-[10px]">{new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

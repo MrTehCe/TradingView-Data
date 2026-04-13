@@ -37,7 +37,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS   = 4 * 60 * 60 * 1000;   // 4 hours — supports 1m–4H views
+const MAX_HISTORY_MS   = 12 * 60 * 60 * 1000;  // 12 hours retained — existing views (1m–4H) always have full data
 const FLUSH_INTERVAL   = 5_000;                  // write new records to IDB every 5 s
 const PRUNE_INTERVAL   = 30 * 60 * 1000;        // prune IDB every 30 min
 

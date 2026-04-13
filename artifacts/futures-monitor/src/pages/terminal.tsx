@@ -66,8 +66,14 @@ export default function TerminalPage() {
       // ── SL / TP auto-close ───────────────────────────────────────────────
       if (triggeredRef.current.has(pos.id)) continue;
 
-      const slHit = pos.sl != null && (pos.side === 'L' ? px <= pos.sl : px >= pos.sl);
-      const tpHit = pos.tp != null && (pos.side === 'L' ? px >= pos.tp : px <= pos.tp);
+      // Validity: SL must be below entry for longs / above entry for shorts.
+      // TP must be above entry for longs / below entry for shorts.
+      // If dragged to the wrong side of entry, ignore it entirely.
+      const slValid = pos.sl != null && (pos.side === 'L' ? pos.sl < pos.entry : pos.sl > pos.entry);
+      const tpValid = pos.tp != null && (pos.side === 'L' ? pos.tp > pos.entry : pos.tp < pos.entry);
+
+      const slHit = slValid && (pos.side === 'L' ? px <= pos.sl! : px >= pos.sl!);
+      const tpHit = tpValid && (pos.side === 'L' ? px >= pos.tp! : px <= pos.tp!);
       if (!slHit && !tpHit) continue;
 
       triggeredRef.current.add(pos.id);

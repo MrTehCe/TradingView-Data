@@ -14,13 +14,15 @@ interface SlTpToast { id: number; msg: string; kind: 'sl' | 'tp' }
 
 export default function TerminalPage() {
   const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
-  const { positions, acct, addPosition, scaleIn, closePosition, updatePosition, updateAcct } = usePositions();
+  const { positions, acct, addPosition, scaleIn, closePosition, partialClose, updatePosition, updateAcct } = usePositions();
   const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
   const [toasts, setToasts] = useState<SlTpToast[]>([]);
 
   // Track which position IDs have already been auto-closed this session
-  // (prevents double-firing if quotes arrive faster than state settles)
   const triggeredRef = useRef<Set<string>>(new Set());
+
+  // High-water / low-water per position ID for trailing stop
+  const hwRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -39,20 +41,35 @@ export default function TerminalPage() {
 
   const activeData = quotes[active.display];
 
-  // ── SL / TP auto-close monitor ───────────────────────────────────────────
+  // ── SL / TP auto-close + trailing stop monitor ───────────────────────────
   useEffect(() => {
     for (const pos of positions) {
-      if (triggeredRef.current.has(pos.id)) continue;
-
       const px = currentPrices[pos.symbol];
       if (px == null) continue;
 
+      // ── Trailing stop: advance SL as price moves favourably ──────────────
+      if (pos.trailPts != null && pos.trailPts > 0) {
+        const hw = hwRef.current[pos.id];
+        const newHw = pos.side === 'L' ? Math.max(hw ?? px, px) : Math.min(hw ?? px, px);
+        hwRef.current[pos.id] = newHw;
+
+        const newSl = pos.side === 'L' ? newHw - pos.trailPts : newHw + pos.trailPts;
+        const slImproved = pos.sl == null
+          || (pos.side === 'L' && newSl > pos.sl)
+          || (pos.side === 'S' && newSl < pos.sl);
+
+        if (slImproved) {
+          updatePosition(pos.id, { sl: Math.round(newSl * 100) / 100 });
+        }
+      }
+
+      // ── SL / TP auto-close ───────────────────────────────────────────────
+      if (triggeredRef.current.has(pos.id)) continue;
+
       const slHit = pos.sl != null && (pos.side === 'L' ? px <= pos.sl : px >= pos.sl);
       const tpHit = pos.tp != null && (pos.side === 'L' ? px >= pos.tp : px <= pos.tp);
-
       if (!slHit && !tpHit) continue;
 
-      // Mark immediately so concurrent quote updates don't re-trigger
       triggeredRef.current.add(pos.id);
 
       const kind  = slHit ? 'sl' as const : 'tp' as const;
@@ -68,11 +85,14 @@ export default function TerminalPage() {
     }
   });   // runs every render so it reacts to every quote update
 
-  // Clean up triggered IDs for positions that no longer exist
+  // Clean up triggered IDs + hw entries for closed positions
   useEffect(() => {
     const ids = new Set(positions.map(p => p.id));
     for (const id of triggeredRef.current) {
       if (!ids.has(id)) triggeredRef.current.delete(id);
+    }
+    for (const id of Object.keys(hwRef.current)) {
+      if (!ids.has(id)) delete hwRef.current[id];
     }
   }, [positions]);
 
@@ -96,6 +116,7 @@ export default function TerminalPage() {
         onAddPosition={addPosition}
         onScaleIn={scaleIn}
         onClosePosition={(id) => closePosition(id, currentPrices[positions.find(p => p.id === id)?.symbol ?? ''] ?? null)}
+        onPartialClose={partialClose}
         onUpdatePosition={updatePosition}
         onUpdateAcct={updateAcct}
       />

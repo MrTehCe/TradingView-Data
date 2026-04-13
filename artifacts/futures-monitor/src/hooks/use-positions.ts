@@ -15,6 +15,8 @@ export interface Position {
   tp: number | null;
   /** Running total of fees paid on all entry/scale-in fills (feePerSide × qty each fill) */
   entryFees: number;
+  /** Trailing stop distance in points. When set the SL auto-advances with price. null = fixed SL. */
+  trailPts: number | null;
 }
 
 export interface ClosedTrade {
@@ -44,7 +46,7 @@ const ACCT_KEY = 'fm_account_v3';
 
 function migratePos(raw: unknown[]): Position[] {
   return (raw as Record<string, unknown>[]).map(p => ({
-    sl: null, tp: null, entryFees: 0,
+    sl: null, tp: null, entryFees: 0, trailPts: null,
     ...p,
   })) as Position[];
 }
@@ -146,7 +148,7 @@ export function usePositions() {
         const entryFees   = a.feePerSide * qty;
         const { sl, tp }  = defaultLevels(sym, side, entry);
         const pos: Position = {
-          id: Date.now().toString(), symbol: sym, side, qty, entry, openedAt: Date.now(), sl, tp, entryFees,
+          id: Date.now().toString(), symbol: sym, side, qty, entry, openedAt: Date.now(), sl, tp, entryFees, trailPts: null,
         };
         const next = [...prev, pos];
         savePos(next);
@@ -181,10 +183,66 @@ export function usePositions() {
     });
   }, []);
 
-  const updatePosition = useCallback((id: string, patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => {
+  const updatePosition = useCallback((id: string, patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry' | 'trailPts'>>) => {
     setPositions(prev => {
       const next = prev.map(p => p.id === id ? { ...p, ...patch } : p);
       savePos(next);
+      return next;
+    });
+  }, []);
+
+  /** Close a portion of a position at the given exit price and book a partial trade. */
+  const partialClose = useCallback((id: string, closeQty: number, exitPx: number) => {
+    setPositions(prev => {
+      const pos = prev.find(p => p.id === id);
+      if (!pos || closeQty <= 0) return prev;
+      const actualQty = Math.min(closeQty, pos.qty);
+      const ratio     = actualQty / pos.qty;
+
+      if (actualQty >= pos.qty) {
+        // Full close via this path
+        const next = prev.filter(p => p.id !== id);
+        savePos(next);
+        setAcct(a => {
+          const grossPnl = pnlDollars({ ...pos, qty: actualQty }, exitPx);
+          const fees     = pos.entryFees + a.feePerSide * actualQty;
+          const netPnl   = grossPnl - fees;
+          const trade: ClosedTrade = {
+            id: Date.now().toString(), symbol: pos.symbol, side: pos.side,
+            qty: actualQty, entry: pos.entry, exit: exitPx,
+            grossPnl, fees, pnl: netPnl, closedAt: Date.now(),
+          };
+          const updated = { ...a, realizedPnl: a.realizedPnl + netPnl, closedTrades: [...a.closedTrades, trade] };
+          saveAcct(updated);
+          return updated;
+        });
+        return next;
+      }
+
+      // Partial close — reduce qty and pro-rate entryFees
+      const closedEntryFees   = pos.entryFees * ratio;
+      const remainingEntryFees = pos.entryFees - closedEntryFees;
+      const remainingQty      = pos.qty - actualQty;
+
+      const next = prev.map(p => p.id === id
+        ? { ...p, qty: remainingQty, entryFees: remainingEntryFees }
+        : p
+      );
+      savePos(next);
+
+      setAcct(a => {
+        const grossPnl = pnlDollars({ ...pos, qty: actualQty }, exitPx);
+        const fees     = closedEntryFees + a.feePerSide * actualQty;
+        const netPnl   = grossPnl - fees;
+        const trade: ClosedTrade = {
+          id: Date.now().toString(), symbol: pos.symbol, side: pos.side,
+          qty: actualQty, entry: pos.entry, exit: exitPx,
+          grossPnl, fees, pnl: netPnl, closedAt: Date.now(),
+        };
+        const updated = { ...a, realizedPnl: a.realizedPnl + netPnl, closedTrades: [...a.closedTrades, trade] };
+        saveAcct(updated);
+        return updated;
+      });
       return next;
     });
   }, []);
@@ -211,5 +269,5 @@ export function usePositions() {
     setAcct(prev => { const next = { ...prev, ...patch }; saveAcct(next); return next; });
   }, []);
 
-  return { positions, acct, addPosition, scaleIn, closePosition, updatePosition, updateAcct };
+  return { positions, acct, addPosition, scaleIn, closePosition, partialClose, updatePosition, updateAcct };
 }

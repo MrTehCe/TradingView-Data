@@ -202,54 +202,99 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
 }
 
 // ── Position card ─────────────────────────────────────────────────────────────
-function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
+type InlineForm = 'add' | 'partial' | null;
+
+function PositionCard({ pos, px, feePerSide, onClose, onPartialClose, onUpdate, onScaleIn }: {
   pos: Position;
   px: number | null;
   feePerSide: number;
   onClose: () => void;
-  onUpdate: (patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
+  onPartialClose: (closeQty: number, exitPx: number) => void;
+  onUpdate: (patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry' | 'trailPts'>>) => void;
   onScaleIn: (addQty: number, addPrice: number) => void;
 }) {
-  const [, setTick]        = useState(0);
-  const [addingMore, setAddingMore] = useState(false);
-  const [addQty, setAddQty]         = useState('1');
-  const [addPrice, setAddPrice]     = useState('');
-  const addPriceRef = useRef<HTMLInputElement>(null);
+  const [, setTick]          = useState(0);
+  const [form, setForm]      = useState<InlineForm>(null);
+  // add-more form
+  const [addQty, setAddQty]   = useState('1');
+  const [addPrice, setAddPrice] = useState('');
+  const addPriceRef             = useRef<HTMLInputElement>(null);
+  // partial-close form
+  const [pQty, setPQty]     = useState('1');
+  const [pPrice, setPPrice] = useState('');
+  const pPriceRef           = useRef<HTMLInputElement>(null);
+  // trail stop
+  const [editTrail, setEditTrail] = useState(false);
+  const [trailRaw, setTrailRaw]   = useState('');
+  const trailRef                  = useRef<HTMLInputElement>(null);
 
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
 
   function openAddMore() {
     setAddPrice(px != null ? px.toFixed(2) : pos.entry.toFixed(2));
     setAddQty('1');
-    setAddingMore(true);
+    setForm('add');
     setTimeout(() => addPriceRef.current?.select(), 30);
   }
   function commitAddMore() {
     const q = Math.max(1, parseInt(addQty, 10) || 1);
     const p = parseFloat(addPrice);
     if (!isNaN(p) && p > 0) onScaleIn(q, p);
-    setAddingMore(false);
+    setForm(null);
+  }
+
+  function openPartial() {
+    setPPrice(px != null ? px.toFixed(2) : '');
+    setPQty(pos.qty > 1 ? '1' : '1');
+    setForm('partial');
+    setTimeout(() => pPriceRef.current?.select(), 30);
+  }
+  function commitPartial() {
+    const q = Math.min(pos.qty, Math.max(1, parseInt(pQty, 10) || 1));
+    const p = parseFloat(pPrice);
+    if (!isNaN(p) && p > 0) onPartialClose(q, p);
+    setForm(null);
+  }
+
+  function openTrail() {
+    setTrailRaw(pos.trailPts != null ? pos.trailPts.toFixed(2) : '');
+    setEditTrail(true);
+    setTimeout(() => trailRef.current?.select(), 20);
+  }
+  function commitTrail() {
+    const v = parseFloat(trailRaw);
+    onUpdate({ trailPts: !isNaN(v) && v > 0 ? v : null });
+    setEditTrail(false);
   }
 
   const has        = px != null;
   const grossPnl   = has ? pnlDollars(pos, px!) : null;
   const netPnl     = has ? netPnlDollars(pos, px!, feePerSide) : null;
   const pts        = has ? pnlPoints(pos, px!) : null;
-  const roundFees  = totalFees(pos, feePerSide);   // projected total fees at close
+  const roundFees  = totalFees(pos, feePerSide);
   const win        = netPnl !== null && netPnl >= 0;
 
-  // SL/TP badges show net P&L at that level
   const slNet  = pos.sl != null ? pnlDollars(pos, pos.sl)  - roundFees : null;
   const tpNet  = pos.tp != null ? pnlDollars(pos, pos.tp)  - roundFees : null;
 
-  // Weighted-average + new fee preview during add-more form
   const addPreview = (() => {
     const q = Math.max(1, parseInt(addQty, 10) || 1);
     const p = parseFloat(addPrice);
     if (isNaN(p)) return null;
-    const avgEntry   = (pos.entry * pos.qty + p * q) / (pos.qty + q);
-    const newEntryFees = pos.entryFees + feePerSide * q;
-    return { avgEntry, newEntryFees };
+    return {
+      avgEntry:    (pos.entry * pos.qty + p * q) / (pos.qty + q),
+      newEntryFees: pos.entryFees + feePerSide * q,
+    };
+  })();
+
+  const pClosePreview = (() => {
+    const q = Math.min(pos.qty, Math.max(1, parseInt(pQty, 10) || 1));
+    const p = parseFloat(pPrice);
+    if (isNaN(p) || p <= 0) return null;
+    const ratio     = q / pos.qty;
+    const closeFees = pos.entryFees * ratio + feePerSide * q;
+    const gross     = (pos.side === 'L' ? p - pos.entry : pos.entry - p) * q * (POINT_VALUE[pos.symbol] ?? 1);
+    return { net: gross - closeFees, remaining: pos.qty - q };
   })();
 
   return (
@@ -289,6 +334,12 @@ function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
           className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono border-white/8 text-white/25 hover:text-cyan-400 hover:border-cyan-500/30 transition-all">
           <Plus className="w-2.5 h-2.5" /> Add
         </button>
+        {pos.qty > 1 && (
+          <button onClick={openPartial}
+            className="flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono border-white/8 text-white/25 hover:text-amber-400 hover:border-amber-500/30 transition-all">
+            ½ Partial
+          </button>
+        )}
         <button onClick={onClose}
           className="flex items-center gap-1 px-2.5 py-1 rounded border text-[10px] font-mono border-white/10 text-white/30 hover:text-red-400 hover:border-red-500/30 transition-all">
           <X className="w-2.5 h-2.5" /> Close & bank
@@ -296,15 +347,15 @@ function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
       </div>
 
       {/* Scale-in form */}
-      {addingMore && (
-        <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-white/8">
+      {form === 'add' && (
+        <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-cyan-500/15">
           <span className="text-white/30 text-[10px] shrink-0">Add contracts:</span>
           <input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)}
             className="w-12 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
           <span className="text-white/20 text-[10px]">@ price</span>
           <input ref={addPriceRef} type="number" step="0.25" value={addPrice}
             onChange={e => setAddPrice(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setAddingMore(false); }}
+            onKeyDown={e => { if (e.key === 'Enter') commitAddMore(); if (e.key === 'Escape') setForm(null); }}
             className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
           {addPreview !== null && (
             <span className="text-white/30 text-[10px]">
@@ -313,7 +364,29 @@ function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
             </span>
           )}
           <button onClick={commitAddMore} className="px-2.5 py-0.5 bg-white/10 hover:bg-white/20 text-white text-[10px] font-mono rounded transition-colors">Confirm</button>
-          <button onClick={() => setAddingMore(false)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
+          <button onClick={() => setForm(null)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
+        </div>
+      )}
+
+      {/* Partial close form */}
+      {form === 'partial' && (
+        <div className="flex items-center gap-2 px-2 py-2 bg-white/3 rounded border border-amber-500/15">
+          <span className="text-amber-400/60 text-[10px] shrink-0">Close</span>
+          <input type="number" min="1" max={pos.qty - 1} value={pQty} onChange={e => setPQty(e.target.value)}
+            className="w-12 bg-black border border-amber-500/20 rounded px-1.5 py-0.5 text-amber-300 font-mono text-[10px] text-center outline-none focus:border-amber-400/50" />
+          <span className="text-white/20 text-[10px]">of {pos.qty} @ price</span>
+          <input ref={pPriceRef} type="number" step="0.25" value={pPrice}
+            onChange={e => setPPrice(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') commitPartial(); if (e.key === 'Escape') setForm(null); }}
+            className="w-24 bg-black border border-white/15 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none focus:border-white/30" />
+          {pClosePreview !== null && (
+            <span className="text-[10px]">
+              → <span className={pClosePreview.net >= 0 ? 'text-emerald-400' : 'text-red-400'}>{fmtMoney(pClosePreview.net, true)}</span>
+              <span className="text-white/25 ml-1.5">{pClosePreview.remaining}× remain</span>
+            </span>
+          )}
+          <button onClick={commitPartial} className="px-2.5 py-0.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-[10px] font-mono rounded border border-amber-500/25 transition-colors">Bank partial</button>
+          <button onClick={() => setForm(null)} className="text-white/20 hover:text-white/50 transition-colors"><X className="w-3 h-3" /></button>
         </div>
       )}
 
@@ -321,6 +394,36 @@ function PositionCard({ pos, px, feePerSide, onClose, onUpdate, onScaleIn }: {
         <span className="text-white/20 text-[10px] mr-1">Levels:</span>
         <LevelBadge label="SL" price={pos.sl} color="red" pnl={slNet} onSet={v => onUpdate({ sl: v })} onClear={() => onUpdate({ sl: null })} />
         <LevelBadge label="TP" price={pos.tp} color="green" pnl={tpNet} onSet={v => onUpdate({ tp: v })} onClear={() => onUpdate({ tp: null })} />
+
+        {/* Trailing stop badge */}
+        {editTrail ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-mono">
+            <span className="text-amber-400/60 text-[9px]">TRAIL</span>
+            <input ref={trailRef} type="number" step="0.25" min="0.25" value={trailRaw}
+              onChange={e => setTrailRaw(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') commitTrail(); if (e.key === 'Escape') setEditTrail(false); }}
+              onBlur={commitTrail}
+              placeholder="pts"
+              className="w-16 bg-[#111] border border-amber-500/30 rounded px-1.5 py-0.5 text-amber-300 font-mono text-[10px] text-center outline-none" />
+            <span className="text-white/25">pts</span>
+          </span>
+        ) : pos.trailPts != null ? (
+          <span className="inline-flex items-center gap-0.5">
+            <button onClick={openTrail} className="text-[10px] font-mono px-1.5 py-0.5 rounded-l border-y border-l transition-colors border-amber-500/30 text-amber-400/80 hover:border-amber-500/60 hover:text-amber-300">
+              <span className="text-[9px] opacity-60 mr-0.5">TRAIL</span>{pos.trailPts.toFixed(2)} pts
+            </button>
+            <button onClick={() => onUpdate({ trailPts: null })}
+              className="px-1 py-0.5 rounded-r border transition-colors text-white/20 hover:text-white/50 border-amber-500/20 hover:border-amber-500/40">
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </span>
+        ) : (
+          <button onClick={openTrail}
+            className="text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors text-white/20 border-white/10 hover:text-amber-400/70 hover:border-amber-500/30">
+            + Trail
+          </button>
+        )}
+
         <span className="text-white/10 text-[9px] ml-auto">drag lines on chart to adjust</span>
       </div>
     </div>
@@ -403,9 +506,9 @@ function AddTradeForm({ currentPrices, positions, onAdd, onClose }: {
           <span className="text-[9px] text-white/20">avg of existing {existing!.qty}× + new {q}×</span>
         </div>
       ) : px != null && !isNaN(e2) ? (
-        <div className={cn('flex flex-col gap-0.5', pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0 }, px) >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
+        <div className={cn('flex flex-col gap-0.5', pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0, trailPts:null }, px) >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
           <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Currently</label>
-          <span className="text-xs font-mono font-bold">{fmtMoney(pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0 }, px), true)}</span>
+          <span className="text-xs font-mono font-bold">{fmtMoney(pnlDollars({ id:'', symbol:sym, side, qty:q, entry:e2, openedAt:0, sl:null, tp:null, entryFees:0, trailPts:null }, px), true)}</span>
         </div>
       ) : null}
 
@@ -424,11 +527,12 @@ interface Props {
   onAddPosition: (sym: string, side: 'L' | 'S', qty: number, entry: number) => void;
   onScaleIn: (id: string, addQty: number, addPrice: number) => void;
   onClosePosition: (id: string) => void;
-  onUpdatePosition: (id: string, patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
+  onPartialClose: (id: string, closeQty: number, exitPx: number) => void;
+  onUpdatePosition: (id: string, patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry' | 'trailPts'>>) => void;
   onUpdateAcct: (patch: Partial<AccountSettings>) => void;
 }
 
-export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosition, onScaleIn, onClosePosition, onUpdatePosition, onUpdateAcct }: Props) {
+export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosition, onScaleIn, onClosePosition, onPartialClose, onUpdatePosition, onUpdateAcct }: Props) {
   const [panel, setPanel] = useState<'positions' | 'history' | 'add' | null>(null);
   const close = useCallback(() => setPanel(null), []);
 
@@ -540,6 +644,7 @@ export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosit
                   px={currentPrices[pos.symbol] ?? null}
                   feePerSide={acct.feePerSide}
                   onClose={() => onClosePosition(pos.id)}
+                  onPartialClose={(closeQty, exitPx) => onPartialClose(pos.id, closeQty, exitPx)}
                   onUpdate={patch => onUpdatePosition(pos.id, patch)}
                   onScaleIn={(addQty, addPrice) => onScaleIn(pos.id, addQty, addPrice)}
                 />

@@ -60,6 +60,10 @@ export interface QuoteData {
   prevClose: number | null;
   timestamp: number | null;
   session: string | null;
+  ask: number | null;
+  askSize: number | null;
+  bid: number | null;
+  bidSize: number | null;
 }
 
 export interface TvConnectionStatus {
@@ -204,6 +208,10 @@ export class TradingViewFeed extends EventEmitter {
         "current_session",
         "status",
         "update_mode",
+        "ask",
+        "ask_size",
+        "bid",
+        "bid_size",
       ])
     );
 
@@ -246,6 +254,10 @@ export class TradingViewFeed extends EventEmitter {
       prevClose: (v["prev_close_price"] as number | undefined) ?? prev?.prevClose ?? null,
       timestamp: v["lp_time"] ? (v["lp_time"] as number) * 1000 : prev?.timestamp ?? null,
       session: (v["current_session"] as string | undefined) ?? prev?.session ?? null,
+      ask: (v["ask"] as number | undefined) ?? prev?.ask ?? null,
+      askSize: (v["ask_size"] as number | undefined) ?? prev?.askSize ?? null,
+      bid: (v["bid"] as number | undefined) ?? prev?.bid ?? null,
+      bidSize: (v["bid_size"] as number | undefined) ?? prev?.bidSize ?? null,
     };
 
     this.quoteSnapshot.set(symbolKey, merged);

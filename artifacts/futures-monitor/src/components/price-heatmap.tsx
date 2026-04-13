@@ -319,15 +319,23 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       for (let col = 0; col <= COLS; col += colEvery) { const x = LABEL_W + col * cellW; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, gridH); ctx.stroke(); }
 
       // ── 4. Price path + bubbles ───────────────────────────────────────────
+      // Zero-tick rule: when price is unchanged, inherit the last real direction
+      // (same as market microstructure uptick/downtick convention)
       interface PlotTick { x: number; y: number; isUp: boolean; age: number }
       const plotTicks: PlotTick[] = [];
       let prevP: number | null = null;
+      let lastDir = true;   // last real direction: true=up, false=down
       for (const tick of allTicks) {
         const age = now - tick.ts;
         if (age > duration) { prevP = tick.price; continue; }
         const x = toX(tick.ts), y = toY(tick.price);
         if (x < LABEL_W || y < 0 || y > gridH) { prevP = tick.price; continue; }
-        plotTicks.push({ x, y, isUp: prevP === null || tick.price >= prevP, age });
+        let isUp: boolean;
+        if (prevP === null)            { isUp = true; }
+        else if (tick.price > prevP)   { isUp = true;    lastDir = true;  }
+        else if (tick.price < prevP)   { isUp = false;   lastDir = false; }
+        else                           { isUp = lastDir; }   // zero-tick
+        plotTicks.push({ x, y, isUp, age });
         prevP = tick.price;
       }
       if (plotTicks.length > 1) {

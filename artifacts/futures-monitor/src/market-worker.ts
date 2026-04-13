@@ -59,6 +59,20 @@ function pruneHistory() {
 }
 setInterval(pruneHistory, 30 * 60 * 1000);
 
+// Safe send: if the socket throws or is not truly open, force a reconnect.
+// The caller is responsible for ensuring the message will be re-sent in onopen.
+function safeSend(payload: string): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(payload);
+    return true;
+  } catch {
+    // Underlying TCP dead — force-close so onclose triggers reconnect
+    try { ws.close(); } catch { /* ignore */ }
+    return false;
+  }
+}
+
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 function connectWs() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
@@ -71,8 +85,9 @@ function connectWs() {
   }
 
   ws.onopen = () => {
-    if (savedToken) ws!.send(JSON.stringify({ type: 'set_auth_token', token: savedToken, cookieStr: savedCookieStr }));
-    for (const sym of subscribedSymbols) ws!.send(JSON.stringify({ type: 'subscribe', symbol: sym }));
+    // Always replay auth + subscriptions on every (re)connect
+    if (savedToken) safeSend(JSON.stringify({ type: 'set_auth_token', token: savedToken, cookieStr: savedCookieStr }));
+    for (const sym of subscribedSymbols) safeSend(JSON.stringify({ type: 'subscribe', symbol: sym }));
   };
 
   ws.onclose = () => {
@@ -81,7 +96,9 @@ function connectWs() {
     reconnectTimer = setTimeout(connectWs, 3000);
   };
 
-  ws.onerror = () => {};
+  ws.onerror = () => {
+    // onerror is always followed by onclose; reconnect happens there
+  };
 
   ws.onmessage = (event) => {
     try {
@@ -137,10 +154,10 @@ self.onconnect = (e: MessageEvent) => {
       if (msg.type === 'set_auth_token' && msg.token) {
         savedToken     = msg.token;
         savedCookieStr = msg.cookieStr ?? '';
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'set_auth_token', token: savedToken, cookieStr: savedCookieStr }));
-        } else {
-          connectWs();
+        // Try to send immediately; if the socket is dead safeSend returns false
+        // and onopen will replay the token when the socket reconnects
+        if (!safeSend(JSON.stringify({ type: 'set_auth_token', token: savedToken, cookieStr: savedCookieStr }))) {
+          connectWs(); // ensure a reconnect is in progress
         }
       }
 
@@ -148,9 +165,7 @@ self.onconnect = (e: MessageEvent) => {
         const tvSym   = msg.symbol as string;
         const dispSym = tvToDisplay(tvSym);
         subscribedSymbols.add(tvSym);
-        if (ws?.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'subscribe', symbol: tvSym }));
-        }
+        safeSend(JSON.stringify({ type: 'subscribe', symbol: tvSym }));
         // Send any accumulated history to this tab right now
         const ticks = tickHistory[dispSym] ?? [];
         const ob    = obHistory[dispSym]   ?? [];

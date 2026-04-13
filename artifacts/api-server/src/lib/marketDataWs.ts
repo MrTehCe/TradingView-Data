@@ -63,9 +63,22 @@ export function attachMarketDataWs(server: Server) {
     broadcast(clients, currentStatus);
   });
 
+  // ── Keepalive: ping every 25 s to prevent proxy idle-timeout ──────────────
+  const heartbeat = setInterval(() => {
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.ping();
+      } else {
+        clients.delete(client);
+      }
+    }
+  }, 25_000);
+  wss.on("close", () => clearInterval(heartbeat));
+
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     logger.info({ ip: req.socket.remoteAddress }, "Market data WS client connected");
     clients.add(ws);
+    ws.on("pong", () => { /* connection still alive */ });
 
     ws.send(JSON.stringify(currentStatus));
 

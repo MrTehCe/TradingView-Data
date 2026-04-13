@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
-import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle, RotateCcw } from 'lucide-react';
+import { X, Plus, TrendingUp, TrendingDown, Pencil, Check, AlertTriangle, RotateCcw, ChevronDown } from 'lucide-react';
 import { KNOWN_SYMBOLS } from '@/components/symbol-selector';
 import { type Position, type AccountSettings, pnlDollars, pnlPoints } from '@/hooks/use-positions';
 
@@ -12,12 +13,12 @@ function elapsed(ms: number) {
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
-export function fmtMoney(n: number, forceSign = false) {
+function fmtMoney(n: number, forceSign = false) {
   const sign = forceSign && n > 0 ? '+' : '';
   return sign + new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
 }
 
-// ── Editable number ───────────────────────────────────────────────────────────
+// ── Inline editable number ────────────────────────────────────────────────────
 function EditableNumber({ value, onChange, prefix = '', suffix = '', step = 1, min = 0, decimals = 0 }: {
   value: number; onChange: (v: number) => void;
   prefix?: string; suffix?: string; step?: number; min?: number; decimals?: number;
@@ -49,6 +50,78 @@ function EditableNumber({ value, onChange, prefix = '', suffix = '', step = 1, m
   );
 }
 
+// ── SL / TP level badge ───────────────────────────────────────────────────────
+function LevelBadge({ label, price, onSet, onClear, color, pnl }: {
+  label: string; price: number | null; onSet: (v: number) => void; onClear: () => void;
+  color: 'red' | 'green'; pnl?: number | null;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw]         = useState('');
+  const ref                   = useRef<HTMLInputElement>(null);
+  function start(defaultVal: number) { setRaw(defaultVal.toFixed(2)); setEditing(true); setTimeout(() => ref.current?.select(), 20); }
+  function commit() { const v = parseFloat(raw); if (!isNaN(v) && v > 0) onSet(v); setEditing(false); }
+  const cl = color === 'red'
+    ? 'border-red-500/30 text-red-400/80 hover:border-red-500/60 hover:text-red-300'
+    : 'border-emerald-500/30 text-emerald-400/80 hover:border-emerald-500/60 hover:text-emerald-300';
+  if (editing) return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-mono">
+      <span className={cn('text-[9px] uppercase tracking-widest', color === 'red' ? 'text-red-400/60' : 'text-emerald-400/60')}>{label}</span>
+      <input ref={ref} type="number" step="0.25" value={raw}
+        onChange={e => setRaw(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
+        onBlur={commit}
+        className="w-20 bg-[#111] border border-white/20 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none" />
+    </span>
+  );
+  if (price == null) return (
+    <button onClick={() => start(0)}
+      className="text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors text-white/20 border-white/10 hover:text-white/50 hover:border-white/20">
+      + {label}
+    </button>
+  );
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <button onClick={() => start(price)} className={cn('text-[10px] font-mono px-1.5 py-0.5 rounded-l border-y border-l transition-colors', cl)}>
+        <span className="text-[9px] opacity-60 mr-0.5">{label}</span>{price.toFixed(2)}
+        {pnl != null && <span className={cn('ml-1 text-[9px]', pnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60')}>{fmtMoney(pnl, true)}</span>}
+      </button>
+      <button onClick={onClear}
+        className={cn('px-1 py-0.5 rounded-r border transition-colors text-white/20 hover:text-white/50', color === 'red' ? 'border-red-500/20 hover:border-red-500/40' : 'border-emerald-500/20 hover:border-emerald-500/40')}>
+        <X className="w-2.5 h-2.5" />
+      </button>
+    </span>
+  );
+}
+
+// ── Floating overlay window ───────────────────────────────────────────────────
+function FloatingWindow({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[88px] px-3" onClick={onClose}>
+      <div
+        className="w-full max-w-3xl max-h-[70vh] bg-[#08080f] border border-[#1e1e2e] rounded-xl shadow-2xl overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#141420] shrink-0">
+          <span className="text-[11px] font-mono tracking-[0.2em] text-white/40 uppercase">{title}</span>
+          <button onClick={onClose} className="text-white/20 hover:text-white/60 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-3">
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── Account bar ───────────────────────────────────────────────────────────────
 function AccountBar({ unrealizedPnl, acct, onUpdate }: {
   unrealizedPnl: number;
@@ -62,15 +135,12 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
   const pct          = Math.min(1, drawdownUsed / maxLoss);
   const breached     = remaining <= 0;
   const warning      = pct >= 0.75 && !breached;
-  const currentEquity = acct.balance + totalPnl;
-  const barColor = breached ? 'bg-red-500' : warning ? 'bg-amber-400' : 'bg-emerald-500/70';
+  const barColor     = breached ? 'bg-red-500' : warning ? 'bg-amber-400' : 'bg-emerald-500/70';
 
   return (
     <div className={cn(
       'flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-2 rounded-md border font-mono text-xs mb-2',
-      breached ? 'bg-red-950/30 border-red-500/30'
-      : warning ? 'bg-amber-950/20 border-amber-500/20'
-      : 'bg-[#090910] border-[#181825]'
+      breached ? 'bg-red-950/30 border-red-500/30' : warning ? 'bg-amber-950/20 border-amber-500/20' : 'bg-[#090910] border-[#181825]'
     )}>
       <div className="flex items-center gap-1.5 text-white/40">
         <span className="text-[10px] tracking-widest uppercase text-white/20">Account</span>
@@ -96,7 +166,7 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
       <div className="flex items-center gap-1.5">
         <span className="text-[10px] uppercase tracking-widest text-white/20">Equity</span>
         <span className={cn('font-bold', totalPnl > 0 ? 'text-emerald-400' : totalPnl < 0 ? 'text-purple-400' : 'text-white/50')}>
-          {fmtMoney(currentEquity)}
+          {fmtMoney(acct.balance + totalPnl)}
         </span>
       </div>
       <div className="flex items-center gap-2 ml-auto">
@@ -117,10 +187,8 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
           {(pct * 100).toFixed(0)}%
         </span>
         {(acct.realizedPnl !== 0 || acct.closedTrades.length > 0) && (
-          <button
-            onClick={() => { if (confirm('Reset realized P&L and trade history for a new session?')) onUpdate({ realizedPnl: 0, closedTrades: [] }); }}
-            className="flex items-center gap-1 text-[10px] text-white/20 hover:text-amber-400/70 border border-white/8 hover:border-amber-400/30 rounded px-1.5 py-0.5 transition-colors"
-          >
+          <button onClick={() => { if (confirm('Reset realized P&L and trade history?')) onUpdate({ realizedPnl: 0, closedTrades: [] }); }}
+            className="flex items-center gap-1 text-[10px] text-white/20 hover:text-amber-400/70 border border-white/8 hover:border-amber-400/30 rounded px-1.5 py-0.5 transition-colors">
             <RotateCcw className="w-2.5 h-2.5" /> Reset
           </button>
         )}
@@ -129,80 +197,140 @@ function AccountBar({ unrealizedPnl, acct, onUpdate }: {
   );
 }
 
-// ── Editable price level badge (SL / TP on position card) ────────────────────
-function LevelBadge({
-  label, price, onSet, onClear, color,
-  pnl,
-}: {
-  label: string; price: number | null; onSet: (v: number) => void; onClear: () => void;
-  color: 'red' | 'green'; pnl?: number | null;
+// ── Position card ─────────────────────────────────────────────────────────────
+function PositionCard({ pos, px, onClose, onUpdate }: {
+  pos: Position;
+  px: number | null;
+  onClose: () => void;
+  onUpdate: (patch: Partial<Pick<Position, 'sl' | 'tp' | 'qty' | 'entry'>>) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [raw, setRaw]         = useState('');
-  const ref                   = useRef<HTMLInputElement>(null);
+  const [, setTick] = useState(0);
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
 
-  function start(defaultVal: number) {
-    setRaw(defaultVal.toFixed(2));
-    setEditing(true);
-    setTimeout(() => ref.current?.select(), 20);
-  }
-  function commit() {
-    const v = parseFloat(raw);
-    if (!isNaN(v) && v > 0) onSet(v);
-    setEditing(false);
-  }
-
-  const cl = color === 'red'
-    ? 'border-red-500/30 text-red-400/80 hover:border-red-500/60 hover:text-red-300'
-    : 'border-emerald-500/30 text-emerald-400/80 hover:border-emerald-500/60 hover:text-emerald-300';
-
-  if (editing) {
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-mono">
-        <span className={cn('text-[9px] uppercase tracking-widest', color === 'red' ? 'text-red-400/60' : 'text-emerald-400/60')}>{label}</span>
-        <input ref={ref} type="number" step="0.25" value={raw}
-          onChange={e => setRaw(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false); }}
-          onBlur={commit}
-          className="w-20 bg-[#111] border border-white/20 rounded px-1.5 py-0.5 text-white font-mono text-[10px] text-center outline-none" />
-      </span>
-    );
-  }
-
-  if (price == null) {
-    return (
-      <button
-        onClick={() => start(0)}
-        className={cn('text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors text-white/20 border-white/10 hover:text-white/50 hover:border-white/20')}
-      >
-        + {label}
-      </button>
-    );
-  }
+  const has    = px != null;
+  const pnl    = has ? pnlDollars(pos, px!) : null;
+  const pts    = has ? pnlPoints(pos, px!) : null;
+  const win    = pnl !== null && pnl >= 0;
+  const slPnl  = pos.sl != null ? pnlDollars(pos, pos.sl) : null;
+  const tpPnl  = pos.tp != null ? pnlDollars(pos, pos.tp) : null;
 
   return (
-    <span className="inline-flex items-center gap-0.5">
-      <button
-        onClick={() => start(price)}
-        className={cn('text-[10px] font-mono px-1.5 py-0.5 rounded-l border-y border-l transition-colors', cl)}
-      >
-        <span className="text-[9px] opacity-60 mr-0.5">{label}</span>
-        {price.toFixed(2)}
-        {pnl != null && (
-          <span className={cn('ml-1 text-[9px]', pnl >= 0 ? 'text-emerald-400/60' : 'text-red-400/60')}>
-            {fmtMoney(pnl, true)}
+    <div className={cn(
+      'group flex flex-col gap-2 rounded-lg px-4 py-3 border text-xs font-mono',
+      win ? 'bg-emerald-950/30 border-emerald-500/20' : pnl !== null ? 'bg-purple-950/20 border-purple-500/15' : 'bg-white/3 border-white/8'
+    )}>
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex flex-col gap-0.5 min-w-[56px]">
+          <span className="text-white/35 text-[10px] tracking-widest">{pos.symbol}</span>
+          <span className={cn('font-bold text-sm', pos.side === 'L' ? 'text-emerald-400' : 'text-purple-400')}>
+            {pos.side === 'L' ? '▲ Long' : '▼ Short'}
           </span>
+        </div>
+        <div className="flex flex-col gap-0.5 text-white/40">
+          <span className="text-[10px]">{pos.qty}× contracts</span>
+          <span>Entry @ <span className="text-white/60">{pos.entry.toFixed(2)}</span></span>
+        </div>
+        {has && (
+          <div className="flex flex-col gap-0.5 text-white/40">
+            <span className="text-[10px]">now</span>
+            <span className="text-white/70">{px!.toFixed(2)}</span>
+          </div>
         )}
-      </button>
-      <button onClick={onClear}
-        className={cn('px-1 py-0.5 rounded-r border transition-colors text-white/20 hover:text-white/50', color === 'red' ? 'border-red-500/20 hover:border-red-500/40' : 'border-emerald-500/20 hover:border-emerald-500/40')}>
-        <X className="w-2.5 h-2.5" />
-      </button>
-    </span>
+        {pnl !== null && pts !== null && (
+          <div className={cn('flex flex-col gap-0.5 text-right ml-auto', win ? 'text-emerald-400' : 'text-purple-400')}>
+            <span className="text-[10px] opacity-50">{pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts</span>
+            <span className="font-bold text-base tabular-nums">{fmtMoney(pnl, true)}</span>
+          </div>
+        )}
+        <span className="text-white/15 text-[10px]">{elapsed(pos.openedAt)}</span>
+        <button onClick={onClose}
+          className="flex items-center gap-1 px-2.5 py-1 rounded border text-[10px] font-mono border-white/10 text-white/30 hover:text-red-400 hover:border-red-500/30 transition-all">
+          <X className="w-2.5 h-2.5" /> Close & bank
+        </button>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="text-white/20 text-[10px] mr-1">Levels:</span>
+        <LevelBadge label="SL" price={pos.sl} color="red" pnl={slPnl} onSet={v => onUpdate({ sl: v })} onClear={() => onUpdate({ sl: null })} />
+        <LevelBadge label="TP" price={pos.tp} color="green" pnl={tpPnl} onSet={v => onUpdate({ tp: v })} onClear={() => onUpdate({ tp: null })} />
+        <span className="text-white/10 text-[9px] ml-auto">drag lines on chart to adjust</span>
+      </div>
+    </div>
   );
 }
 
-// ── Main panel ────────────────────────────────────────────────────────────────
+// ── Add trade form ────────────────────────────────────────────────────────────
+function AddTradeForm({ currentPrices, onAdd, onClose }: {
+  currentPrices: Record<string, number | null>;
+  onAdd: (sym: string, side: 'L' | 'S', qty: number, entry: number) => void;
+  onClose: () => void;
+}) {
+  const [sym,   setSym]   = useState<string>('MES');
+  const [side,  setSide]  = useState<'L' | 'S'>('L');
+  const [qty,   setQty]   = useState('1');
+  const [entry, setEntry] = useState(() => (currentPrices['MES'] ?? 0).toFixed(2));
+  const entryRef          = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const px = currentPrices[sym];
+    if (px != null) setEntry(px.toFixed(2));
+  }, [sym, currentPrices]);
+
+  useEffect(() => { setTimeout(() => entryRef.current?.select(), 50); }, []);
+
+  function submit() {
+    const e = parseFloat(entry), q = Math.max(1, parseInt(qty, 10) || 1);
+    if (isNaN(e)) return;
+    onAdd(sym, side, q, e);
+    onClose();
+  }
+
+  const px = currentPrices[sym];
+  const e2 = parseFloat(entry);
+  const preview = !isNaN(e2) && px != null
+    ? pnlDollars({ id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty) || 1), entry: e2, openedAt: 0, sl: null, tp: null }, px)
+    : null;
+
+  return (
+    <div className="flex flex-wrap items-end gap-3 p-4 bg-[#0b0b16] border border-[#1e1e2e] rounded-lg">
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Symbol</label>
+        <select value={sym} onChange={e => setSym(e.target.value)}
+          className="bg-[#0d0d1a] border border-[#2a2a3e] rounded px-2 py-1.5 text-white font-mono text-xs outline-none cursor-pointer">
+          {KNOWN_SYMBOLS.map(s => <option key={s.tv} value={s.display}>{s.display} — {s.desc}</option>)}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Side</label>
+        <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
+          <button onClick={() => setSide('L')} className={cn('px-4 py-1.5 transition-colors', side === 'L' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-white/25 hover:text-white/50')}>Long</button>
+          <button onClick={() => setSide('S')} className={cn('px-4 py-1.5 transition-colors', side === 'S' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-white/25 hover:text-white/50')}>Short</button>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Contracts</label>
+        <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
+          className="w-16 bg-black border border-[#2a2a3e] rounded px-2 py-1.5 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Entry Price</label>
+        <input ref={entryRef} type="number" step="0.25" value={entry}
+          onChange={e => setEntry(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
+          className="w-28 bg-black border border-[#2a2a3e] rounded px-2 py-1.5 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
+      </div>
+      {preview !== null && (
+        <div className={cn('flex flex-col gap-0.5', preview >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>
+          <label className="text-[10px] font-mono text-white/25 uppercase tracking-widest">Currently</label>
+          <span className="text-xs font-mono font-bold">{fmtMoney(preview, true)}</span>
+        </div>
+      )}
+      <button onClick={submit} className="px-5 py-1.5 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors">
+        Add Position
+      </button>
+    </div>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   currentPrices: Record<string, number | null>;
   positions: Position[];
@@ -214,214 +342,142 @@ interface Props {
 }
 
 export function PositionsPanel({ currentPrices, positions = [], acct, onAddPosition, onClosePosition, onUpdatePosition, onUpdateAcct }: Props) {
-  const [adding, setAdding] = useState(false);
-  const [sym,   setSym]     = useState<string>('MES');
-  const [side,  setSide]    = useState<'L' | 'S'>('L');
-  const [qty,   setQty]     = useState('1');
-  const [entry, setEntry]   = useState('');
-  const entryRef            = useRef<HTMLInputElement>(null);
+  const [panel, setPanel] = useState<'positions' | 'history' | 'add' | null>(null);
+  const close = useCallback(() => setPanel(null), []);
 
   const [, setTick] = useState(0);
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
-
-  useEffect(() => {
-    if (!adding) return;
-    const px = currentPrices[sym];
-    if (px != null) setEntry(px.toFixed(2));
-  }, [adding, sym, currentPrices]);
-
-  const openForm = useCallback(() => {
-    const px = currentPrices[sym];
-    if (px != null) setEntry(px.toFixed(2));
-    setAdding(true);
-    setTimeout(() => entryRef.current?.select(), 50);
-  }, [sym, currentPrices]);
-
-  function submit() {
-    const e = parseFloat(entry);
-    const q = Math.max(1, parseInt(qty, 10) || 1);
-    if (isNaN(e)) return;
-    onAddPosition(sym, side, q, e);
-    setAdding(false);
-  }
 
   const unrealizedPnl = positions.reduce((sum, pos) => {
     const px = currentPrices[pos.symbol];
     return px != null ? sum + pnlDollars(pos, px) : sum;
   }, 0);
 
+  const realizedPnl = acct.realizedPnl;
+  const tradeCount  = acct.closedTrades.length;
+
   return (
     <div className="shrink-0">
       <AccountBar unrealizedPnl={unrealizedPnl} acct={acct} onUpdate={onUpdateAcct} />
 
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-1.5">
-        <span className="text-[10px] font-mono tracking-[0.2em] text-white/20 uppercase">Positions</span>
-        {positions.length > 0 && (
-          <div className={cn(
-            'flex items-center gap-1.5 px-2 py-0.5 rounded font-mono font-bold text-sm tabular-nums',
-            unrealizedPnl >= 0
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-              : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-          )}>
-            {unrealizedPnl >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-            {fmtMoney(unrealizedPnl, true)} open
-          </div>
-        )}
-        {acct.closedTrades.length > 0 && (
-          <div className="flex items-center gap-1 text-[10px] font-mono text-white/25">
-            {acct.closedTrades.length} closed ·
-            <span className={acct.realizedPnl >= 0 ? 'text-emerald-400/70' : 'text-purple-400/70'}>
-              {fmtMoney(acct.realizedPnl, true)} realized
-            </span>
-          </div>
-        )}
+      {/* Compact button row */}
+      <div className="flex items-center gap-2 mb-2">
+        {/* Open positions button */}
         <button
-          onClick={adding ? () => setAdding(false) : openForm}
+          onClick={() => setPanel(p => p === 'positions' ? null : 'positions')}
           className={cn(
-            'ml-auto flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded transition-all',
-            adding
-              ? 'text-white/30 hover:text-white/50'
-              : 'bg-white/8 hover:bg-white/12 text-white/60 hover:text-white border border-white/10 hover:border-white/20'
+            'flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-mono transition-all',
+            panel === 'positions'
+              ? 'bg-white/8 border-white/20 text-white'
+              : positions.length > 0
+                ? unrealizedPnl >= 0
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/15'
+                  : 'bg-purple-500/10 border-purple-500/20 text-purple-400 hover:bg-purple-500/15'
+                : 'border-white/8 text-white/25 hover:text-white/40 hover:border-white/15'
           )}
         >
-          {adding ? '✕ cancel' : <><Plus className="w-3 h-3" /> Track Trade</>}
+          {positions.length > 0
+            ? (unrealizedPnl >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)
+            : null}
+          <span>
+            {positions.length > 0
+              ? `${positions.length} open · ${fmtMoney(unrealizedPnl, true)}`
+              : 'Positions'}
+          </span>
+          <ChevronDown className={cn('w-3 h-3 transition-transform', panel === 'positions' && 'rotate-180')} />
+        </button>
+
+        {/* History button */}
+        {tradeCount > 0 && (
+          <button
+            onClick={() => setPanel(p => p === 'history' ? null : 'history')}
+            className={cn(
+              'flex items-center gap-1.5 px-2.5 py-1 rounded border text-[11px] font-mono transition-all',
+              panel === 'history'
+                ? 'bg-white/8 border-white/20 text-white'
+                : realizedPnl >= 0
+                  ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-400/70 hover:text-emerald-400'
+                  : 'bg-purple-500/8 border-purple-500/15 text-purple-400/70 hover:text-purple-400'
+            )}
+          >
+            <span>{tradeCount} closed · {fmtMoney(realizedPnl, true)}</span>
+            <ChevronDown className={cn('w-3 h-3 transition-transform', panel === 'history' && 'rotate-180')} />
+          </button>
+        )}
+
+        {/* Add trade button */}
+        <button
+          onClick={() => setPanel(p => p === 'add' ? null : 'add')}
+          className={cn(
+            'ml-auto flex items-center gap-1 text-[11px] font-mono px-2.5 py-1 rounded transition-all border',
+            panel === 'add'
+              ? 'bg-white/10 border-white/25 text-white'
+              : 'bg-white/5 hover:bg-white/10 text-white/50 hover:text-white border-white/10 hover:border-white/20'
+          )}
+        >
+          <Plus className="w-3 h-3" /> Track Trade
         </button>
       </div>
 
-      {/* Add form */}
-      {adding && (
-        <div className="flex flex-wrap items-center gap-2 mb-2 px-3 py-2 bg-[#0d0d1a] border border-[#222235] rounded-md">
-          <select value={sym} onChange={e => setSym(e.target.value)}
-            className="bg-[#0d0d1a] border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs outline-none cursor-pointer">
-            {KNOWN_SYMBOLS.map(s => <option key={s.tv} value={s.display}>{s.display} — {s.desc}</option>)}
-          </select>
-          <div className="flex rounded overflow-hidden border border-[#2a2a3e] text-xs font-mono">
-            <button onClick={() => setSide('L')} className={cn('px-3 py-1 transition-colors', side === 'L' ? 'bg-emerald-500/20 text-emerald-300 font-bold' : 'text-white/25 hover:text-white/50')}>Long</button>
-            <button onClick={() => setSide('S')} className={cn('px-3 py-1 transition-colors', side === 'S' ? 'bg-purple-500/20 text-purple-300 font-bold' : 'text-white/25 hover:text-white/50')}>Short</button>
-          </div>
-          <label className="flex items-center gap-1.5 text-xs font-mono text-white/30">
-            Contracts
-            <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
-              className="w-14 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
-          </label>
-          <label className="flex items-center gap-1.5 text-xs font-mono text-white/30">
-            Entry @
-            <input ref={entryRef} type="number" step="0.25" value={entry}
-              onChange={e => setEntry(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && submit()}
-              className="w-24 bg-black border border-[#2a2a3e] rounded px-2 py-1 text-white font-mono text-xs text-center outline-none focus:border-white/30" />
-          </label>
-          {(() => {
-            const px = currentPrices[sym];
-            if (px == null) return null;
-            const e2 = parseFloat(entry);
-            if (isNaN(e2)) return null;
-            const fakePos: Position = { id: '', symbol: sym, side, qty: Math.max(1, parseInt(qty)||1), entry: e2, openedAt: 0, sl: null, tp: null };
-            const preview = pnlDollars(fakePos, px);
-            return <span className={cn('text-xs font-mono tabular-nums', preview >= 0 ? 'text-emerald-400/60' : 'text-purple-400/60')}>now: {fmtMoney(preview, true)}</span>;
-          })()}
-          <button onClick={submit}
-            className="px-4 py-1 bg-white text-black text-xs font-mono font-bold rounded hover:bg-gray-200 transition-colors ml-1">
-            Add
-          </button>
-        </div>
+      {/* ── Floating windows ── */}
+
+      {panel === 'add' && (
+        <FloatingWindow title="Track a New Trade" onClose={close}>
+          <AddTradeForm currentPrices={currentPrices} onAdd={onAddPosition} onClose={close} />
+        </FloatingWindow>
       )}
 
-      {/* Position cards */}
-      {positions.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {positions.map(pos => {
-            const px  = currentPrices[pos.symbol];
-            const has = px != null;
-            const pnl = has ? pnlDollars(pos, px!) : null;
-            const pts = has ? pnlPoints(pos, px!) : null;
-            const win = pnl !== null && pnl >= 0;
-            const pv  = POINT_VALUE[pos.symbol] ?? 1;
-            const slPnl = pos.sl != null && pv ? pnlDollars(pos, pos.sl) : null;
-            const tpPnl = pos.tp != null && pv ? pnlDollars(pos, pos.tp) : null;
-
-            return (
-              <div key={pos.id} className={cn(
-                'relative group flex flex-col gap-1 rounded-md px-3 py-2 border text-xs font-mono',
-                win ? 'bg-emerald-950/30 border-emerald-500/20'
-                  : pnl !== null ? 'bg-purple-950/20 border-purple-500/15'
-                  : 'bg-white/3 border-white/8'
-              )}>
-                <div className="flex items-center gap-3">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-white/40 text-[10px] tracking-widest">{pos.symbol}</span>
-                    <span className={cn('font-bold text-sm', pos.side === 'L' ? 'text-emerald-400' : 'text-purple-400')}>
-                      {pos.side === 'L' ? '▲ Long' : '▼ Short'}
-                    </span>
-                  </div>
-                  <div className="flex flex-col gap-0.5 text-white/40">
-                    <span className="text-[10px]">{pos.qty}×</span>
-                    <span>@ {pos.entry.toFixed(2)}</span>
-                  </div>
-                  {has && <><span className="text-white/15">→</span>
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-[10px] text-white/25">now</span>
-                    <span className="text-white/70">{px!.toFixed(2)}</span>
-                  </div></>}
-                  {pnl !== null && pts !== null && (
-                    <div className={cn('flex flex-col gap-0.5 text-right ml-1', win ? 'text-emerald-400' : 'text-purple-400')}>
-                      <span className="text-[10px] opacity-50">{pts >= 0 ? '+' : ''}{pts.toFixed(2)} pts</span>
-                      <span className="font-bold text-base tabular-nums">{fmtMoney(pnl, true)}</span>
-                    </div>
-                  )}
-                  <span className="text-white/15 text-[10px] ml-1">{elapsed(pos.openedAt)}</span>
-                  <button onClick={() => onClosePosition(pos.id)} title="Close trade & bank P&L"
-                    className="ml-2 flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-all border-white/10 text-white/30 hover:text-white hover:border-white/30">
-                    <X className="w-2.5 h-2.5" /> Close
-                  </button>
-                </div>
-
-                {/* SL / TP badges */}
-                <div className="flex items-center gap-2 mt-0.5">
-                  <LevelBadge
-                    label="SL" price={pos.sl} color="red"
-                    pnl={slPnl}
-                    onSet={v => onUpdatePosition(pos.id, { sl: v })}
-                    onClear={() => onUpdatePosition(pos.id, { sl: null })}
-                  />
-                  <LevelBadge
-                    label="TP" price={pos.tp} color="green"
-                    pnl={tpPnl}
-                    onSet={v => onUpdatePosition(pos.id, { tp: v })}
-                    onClear={() => onUpdatePosition(pos.id, { tp: null })}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : !adding ? (
-        <div onClick={openForm}
-          className="flex items-center justify-center gap-2 h-8 rounded-md border border-dashed border-white/8 text-white/15 hover:border-white/20 hover:text-white/35 text-xs font-mono cursor-pointer transition-colors">
-          <Plus className="w-3 h-3" /> Click to track a trade and see live P&L
-        </div>
-      ) : null}
-
-      {/* Closed trades */}
-      {acct.closedTrades.length > 0 && (
-        <div className="mt-2 space-y-0.5">
-          <div className="text-[10px] font-mono tracking-widest text-white/15 uppercase mb-1">Closed Trades</div>
-          {[...acct.closedTrades].reverse().map(t => (
-            <div key={t.id} className={cn(
-              'flex items-center gap-3 px-2.5 py-1 rounded text-[11px] font-mono border',
-              t.pnl >= 0 ? 'bg-emerald-950/15 border-emerald-500/10' : 'bg-purple-950/10 border-purple-500/8'
-            )}>
-              <span className="text-white/30">{t.symbol}</span>
-              <span className={t.side === 'L' ? 'text-emerald-400/60' : 'text-purple-400/60'}>{t.side === 'L' ? '▲' : '▼'} {t.qty}×</span>
-              <span className="text-white/25">{t.entry.toFixed(2)} → {t.exit.toFixed(2)}</span>
-              <span className={cn('font-bold ml-auto tabular-nums', t.pnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
-                {fmtMoney(t.pnl, true)}
-              </span>
-              <span className="text-white/15 text-[10px]">{new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      {panel === 'positions' && (
+        <FloatingWindow title={`Open Positions  (${positions.length})`} onClose={close}>
+          {positions.length === 0 ? (
+            <div className="text-center text-white/20 text-xs font-mono py-8">No open positions</div>
+          ) : (
+            <div className="space-y-2">
+              {positions.map(pos => (
+                <PositionCard
+                  key={pos.id}
+                  pos={pos}
+                  px={currentPrices[pos.symbol] ?? null}
+                  onClose={() => onClosePosition(pos.id)}
+                  onUpdate={patch => onUpdatePosition(pos.id, patch)}
+                />
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </FloatingWindow>
+      )}
+
+      {panel === 'history' && (
+        <FloatingWindow title={`Closed Trades  (${tradeCount})`} onClose={close}>
+          {tradeCount === 0 ? (
+            <div className="text-center text-white/20 text-xs font-mono py-8">No closed trades yet</div>
+          ) : (
+            <div className="space-y-1">
+              {[...acct.closedTrades].reverse().map(t => (
+                <div key={t.id} className={cn(
+                  'flex items-center gap-4 px-4 py-2.5 rounded-md border text-xs font-mono',
+                  t.pnl >= 0 ? 'bg-emerald-950/20 border-emerald-500/15' : 'bg-purple-950/15 border-purple-500/10'
+                )}>
+                  <span className="text-white/40 min-w-[36px]">{t.symbol}</span>
+                  <span className={t.side === 'L' ? 'text-emerald-400/70' : 'text-purple-400/70'}>{t.side === 'L' ? '▲ Long' : '▼ Short'} {t.qty}×</span>
+                  <span className="text-white/30">{t.entry.toFixed(2)} → {t.exit.toFixed(2)}</span>
+                  <span className="text-white/25 text-[10px]">{((t.exit - t.entry) * (t.side === 'L' ? 1 : -1) * t.qty).toFixed(2)} pts</span>
+                  <span className={cn('font-bold ml-auto tabular-nums text-sm', t.pnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
+                    {fmtMoney(t.pnl, true)}
+                  </span>
+                  <span className="text-white/20 text-[10px]">{new Date(t.closedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+              ))}
+              {/* Summary row */}
+              <div className="flex items-center justify-end gap-3 px-4 pt-2 border-t border-white/5 mt-2">
+                <span className="text-white/25 text-[10px] font-mono">{tradeCount} trades · net</span>
+                <span className={cn('font-bold font-mono', acct.realizedPnl >= 0 ? 'text-emerald-400' : 'text-purple-400')}>
+                  {fmtMoney(acct.realizedPnl, true)}
+                </span>
+              </div>
+            </div>
+          )}
+        </FloatingWindow>
       )}
     </div>
   );

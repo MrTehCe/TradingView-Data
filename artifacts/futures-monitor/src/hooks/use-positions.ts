@@ -38,9 +38,15 @@ const ACCT_KEY = 'fm_account_v2';
 
 function loadPos(): Position[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(POS_KEY) ?? '[]') as Position[];
-    // Migrate old positions that lack sl/tp fields
-    return raw.map(p => ({ sl: null, tp: null, ...p }));
+    // Try current key first; fall back to previous key so we don't lose open trades on upgrade
+    const raw = localStorage.getItem(POS_KEY) ?? localStorage.getItem('fm_positions_v2') ?? '[]';
+    const parsed = JSON.parse(raw) as Position[];
+    const migrated = parsed.map(p => ({ sl: null, tp: null, ...p }));
+    // If we read from the old key, migrate it forward immediately
+    if (!localStorage.getItem(POS_KEY) && migrated.length > 0) {
+      localStorage.setItem(POS_KEY, JSON.stringify(migrated));
+    }
+    return migrated;
   } catch { return []; }
 }
 function savePos(p: Position[]) { localStorage.setItem(POS_KEY, JSON.stringify(p)); }

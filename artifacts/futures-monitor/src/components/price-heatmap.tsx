@@ -490,13 +490,24 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         if (sh > 0.5) { ctx.fillStyle = 'rgba(160,50,230,0.75)'; ctx.fillRect(x, deltaBase, w, sh); }
       }
 
-      // ── 10. Time axis ─────────────────────────────────────────────────────
+      // ── 10. Time axis (wall-clock timestamps) ────────────────────────────
       ctx.fillStyle = '#0d0d18'; ctx.fillRect(0, gridH + DELTA_H, W, TIME_H);
-      ctx.fillStyle = '#2e2e42'; ctx.font = '9px monospace'; ctx.textAlign = 'center';
+      const showSecs = duration <= 300_000;   // show HH:MM:SS for ≤5m, else HH:MM
+      const timeFmt: Intl.DateTimeFormatOptions = {
+        hour: '2-digit', minute: '2-digit', ...(showSecs ? { second: '2-digit' } : {}),
+      };
       for (let col = 0; col <= COLS; col += colEvery) {
-        const ageMs = bucketMs * (COLS - col);
-        const label = col === COLS ? 'now' : ageMs >= 60_000 ? `${Math.round(ageMs / 60_000)}m` : `${Math.round(ageMs / 1_000)}s`;
-        ctx.fillText(label, LABEL_W + col * cellW, gridH + DELTA_H + TIME_H * 0.72);
+        const ageMs  = bucketMs * (COLS - col);
+        const ts     = new Date(now - ageMs);
+        const label  = ts.toLocaleTimeString([], timeFmt);
+        const x      = LABEL_W + col * cellW;
+        const isNow  = col === COLS;
+
+        // Slightly brighter for the current-time column
+        ctx.fillStyle = isNow ? 'rgba(0,230,118,0.55)' : '#2e2e42';
+        ctx.font = isNow ? 'bold 9px monospace' : '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x, gridH + DELTA_H + TIME_H * 0.72);
       }
 
       // ── 11. Status hints ──────────────────────────────────────────────────

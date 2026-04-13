@@ -207,9 +207,11 @@ export class TradingViewFeed extends EventEmitter {
       }
 
       if (msgType === "qsd") {
-        this.handleQuoteData(content);
+        try { this.handleQuoteData(content); }
+        catch (err) { logger.error({ err }, "handleQuoteData error"); }
       } else if (msgType === "timescale_update" || msgType === "du") {
-        this.handleBarData(content);
+        try { this.handleBarData(content); }
+        catch (err) { logger.error({ err }, "handleBarData error"); }
       } else if (msgType === "critical_error" || msgType === "protocol_error") {
         logger.error({ msgType, content: JSON.stringify(content).slice(0, 300) }, "TV protocol error");
       }
@@ -254,42 +256,50 @@ export class TradingViewFeed extends EventEmitter {
   }
 
   private setupChartSession() {
-    this.chartSession = generateSessionId("cs_");
-    this.seriesSymMap.clear();
-    this.send(createMessage("chart_create_session", [this.chartSession, ""]));
+    try {
+      this.chartSession = generateSessionId("cs_");
+      this.seriesSymMap.clear();
+      // chart_create_session takes only the session id
+      this.send(createMessage("chart_create_session", [this.chartSession]));
 
-    this.symbols.forEach((sym, i) => {
-      const symId    = `sds_sym_${i}`;
-      const seriesId = `sds_${i}`;
-      this.seriesSymMap.set(seriesId, sym);
+      this.symbols.forEach((sym, i) => {
+        const symId    = `sds_sym_${i}`;
+        const seriesId = `sds_${i}`;
+        this.seriesSymMap.set(seriesId, sym);
 
-      this.send(createMessage("resolve_symbol", [
-        this.chartSession, symId,
-        `={"symbol":"${sym}","adjustment":"splits"}`,
-        "", ""
-      ]));
+        // resolve_symbol: [chartSession, localAlias, symbolSpec]
+        this.send(createMessage("resolve_symbol", [
+          this.chartSession, symId,
+          `={"symbol":"${sym}","adjustment":"splits","currency-id":"USD"}`,
+        ]));
 
-      this.send(createMessage("create_series", [
-        this.chartSession, seriesId, `s${i}`, symId,
-        "1",                            // 1-minute timeframe
-        TradingViewFeed.HISTORY_BARS,   // ~8 hours
-        ""
-      ]));
-    });
+        // create_series: [chartSession, seriesId, name, symbolRef, resolution, count, range]
+        this.send(createMessage("create_series", [
+          this.chartSession, seriesId, `s${i}`, symId,
+          "1",
+          TradingViewFeed.HISTORY_BARS,
+          "",
+        ]));
+      });
 
-    logger.info({ session: this.chartSession }, "TradingView chart session ready");
+      logger.info({ session: this.chartSession }, "TradingView chart session ready");
+    } catch (err) {
+      logger.error({ err }, "Failed to setup chart session (quote session unaffected)");
+    }
   }
 
   private handleBarData(content: Record<string, unknown>) {
     const params = content["p"] as unknown[];
-    if (!params || params.length < 2) return;
+    if (!Array.isArray(params) || params.length < 2) return;
 
-    const updates = params[1] as Record<string, unknown>;
+    const updates = params[1];
+    if (!updates || typeof updates !== "object" || Array.isArray(updates)) return;
 
-    for (const [seriesId, seriesData] of Object.entries(updates)) {
+    for (const [seriesId, seriesData] of Object.entries(updates as Record<string, unknown>)) {
       const sym = this.seriesSymMap.get(seriesId);
       if (!sym) continue;
 
+      if (!seriesData || typeof seriesData !== "object") continue;
       const sd = seriesData as { s?: { i: number; v: number[] }[] };
       if (!sd?.s?.length) continue;
 

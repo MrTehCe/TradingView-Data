@@ -23,6 +23,12 @@ const TIME_H        = 18;
 const DELTA_H       = 32;
 const BUBBLE_R      = 4.5;
 
+const WIN_DURATIONS = [
+  30_000, 60_000, 120_000, 180_000, 300_000, 600_000, 900_000,
+  1_800_000, 3_600_000, 7_200_000, 14_400_000, 28_800_000,
+  43_200_000, 86_400_000,
+] as const;
+
 function drawSphere(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, isUp: boolean, alpha: number) {
   const g = ctx.createRadialGradient(cx - r * 0.32, cy - r * 0.32, r * 0.06, cx, cy, r);
   if (isUp) {
@@ -49,42 +55,77 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
   const [win, setWin]             = useState<WindowKey>('5m');
   const [visibleRows, setVisible] = useState(DEFAULT_ROWS);
   const [isPanned, setIsPanned]   = useState(false);
+  const [timeOffsetMs, setTimeOffset] = useState(0);
+  const [customDuration, setCustomDuration] = useState<number | null>(null);
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const winRef    = useRef(win);         winRef.current    = win;
   const priceRef  = useRef(currentPrice); priceRef.current = currentPrice;
   const rowsRef   = useRef(visibleRows);  rowsRef.current  = visibleRows;
+  const timeOffsetRef = useRef(timeOffsetMs); timeOffsetRef.current = timeOffsetMs;
+  const customDurRef  = useRef(customDuration); customDurRef.current = customDuration;
 
   const panOffsetRef    = useRef(0);
 
-  // ── Drag state (pan only) ────────────────────────────────────────────────
   const isPanningRef   = useRef(false);
   const panStartYRef   = useRef(0);
+  const panStartXRef   = useRef(0);
   const panStartPanRef = useRef(0);
+  const panStartTimeRef = useRef(0);
 
   const [cursor, setCursor] = useState<'grab' | 'grabbing'>('grab');
+
+  const isLive = timeOffsetMs === 0;
+
+  const goLive = useCallback(() => {
+    setTimeOffset(0);
+    timeOffsetRef.current = 0;
+  }, []);
 
   const resetView = useCallback(() => {
     setVisible(DEFAULT_ROWS);
     panOffsetRef.current = 0;
     setIsPanned(false);
+    setTimeOffset(0);
+    timeOffsetRef.current = 0;
+    setCustomDuration(null);
+    customDurRef.current = null;
   }, []);
 
-  // ── Wheel zoom ──────────────────────────────────────────────────────────
+  // ── Wheel zoom (vertical = price zoom, Ctrl/Shift = time zoom) ──────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const step = Math.max(1, Math.round(rowsRef.current * 0.1));
-      setVisible(p => Math.max(MIN_ROWS, Math.min(MAX_ROWS, p + (e.deltaY > 0 ? step : -step))));
+
+      if (e.ctrlKey || e.metaKey) {
+        const curDur = customDurRef.current ?? WINDOWS[winRef.current].duration;
+        const idx = WIN_DURATIONS.findIndex(d => d >= curDur);
+        const cur = idx === -1 ? WIN_DURATIONS.length - 1 : idx;
+        const next = e.deltaY > 0
+          ? Math.min(WIN_DURATIONS.length - 1, cur + 1)
+          : Math.max(0, cur - 1);
+        const newDur = WIN_DURATIONS[next];
+        setCustomDuration(newDur);
+        customDurRef.current = newDur;
+      } else if (e.shiftKey) {
+        const curDur = customDurRef.current ?? WINDOWS[winRef.current].duration;
+        const scrollAmt = curDur * 0.25;
+        const newOffset = Math.max(0, timeOffsetRef.current + (e.deltaY > 0 ? scrollAmt : -scrollAmt));
+        setTimeOffset(newOffset);
+        timeOffsetRef.current = newOffset;
+      } else {
+        const step = Math.max(1, Math.round(rowsRef.current * 0.1));
+        setVisible(p => Math.max(MIN_ROWS, Math.min(MAX_ROWS, p + (e.deltaY > 0 ? step : -step))));
+      }
     };
     canvas.addEventListener('wheel', onWheel, { passive: false });
     return () => canvas.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ── Mouse events (pan only) ──────────────────────────────────────────────
+  // ── Mouse events (drag = vertical pan + horizontal time scroll) ─────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -93,7 +134,9 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       if (e.button !== 0) return;
       isPanningRef.current  = true;
       panStartYRef.current  = e.clientY;
+      panStartXRef.current  = e.clientX;
       panStartPanRef.current = panOffsetRef.current;
+      panStartTimeRef.current = timeOffsetRef.current;
       setCursor('grabbing');
     };
 
@@ -102,10 +145,19 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       const container = containerRef.current;
       if (!container) return;
       const gridH2 = container.clientHeight - TIME_H - DELTA_H;
+      const gridW2 = container.clientWidth - LABEL_W - PROFILE_W;
       const cellH  = gridH2 / rowsRef.current;
       const dy     = e.clientY - panStartYRef.current;
+      const dx     = e.clientX - panStartXRef.current;
+
       panOffsetRef.current = panStartPanRef.current + (dy / cellH) * bucketSize;
       setIsPanned(panOffsetRef.current !== 0);
+
+      const curDur = customDurRef.current ?? WINDOWS[winRef.current].duration;
+      const timeDelta = -(dx / gridW2) * curDur;
+      const newOffset = Math.max(0, panStartTimeRef.current + timeDelta);
+      setTimeOffset(newOffset);
+      timeOffsetRef.current = newOffset;
     };
 
     const onUp = () => {
@@ -149,7 +201,7 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       ctx.scale(dpr, dpr);
 
       const ROWS     = rowsRef.current;
-      const duration = WINDOWS[winRef.current].duration;
+      const duration = customDurRef.current ?? WINDOWS[winRef.current].duration;
       const price    = priceRef.current;
       const allTicks = tickHistoryRef.current[symbol] ?? [];
       const allOB    = orderBookRef?.current?.[symbol] ?? [];
@@ -159,7 +211,8 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
       const cellW   = gridW / COLS;
       const cellH   = gridH / ROWS;
       const bucketMs = duration / COLS;
-      const now = Date.now();
+      const realNow = Date.now();
+      const now = realNow - timeOffsetRef.current;
 
       ctx.fillStyle = '#06060e';
       ctx.fillRect(0, 0, W, H);
@@ -170,7 +223,16 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         return;
       }
 
-      const rawCenter = price ?? allTicks[allTicks.length - 1]?.price ?? 0;
+      const isScrolledBack = timeOffsetRef.current > 0;
+      let rawCenter: number;
+      if (isScrolledBack) {
+        const visibleTicks = allTicks.filter(t => Math.abs(t.ts - now) <= duration);
+        rawCenter = visibleTicks.length > 0
+          ? visibleTicks[visibleTicks.length - 1].price
+          : (price ?? allTicks[allTicks.length - 1]?.price ?? 0);
+      } else {
+        rawCenter = price ?? allTicks[allTicks.length - 1]?.price ?? 0;
+      }
       const center    = rawCenter - panOffsetRef.current;
       const priceMin  = center - (ROWS / 2) * bucketSize;
       const priceMax  = priceMin + ROWS * bucketSize;
@@ -466,12 +528,37 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         ctx.fillText(label, x, gridH + DELTA_H + TIME_H * 0.78);
       }
 
-      // ── 10. Status hints ──────────────────────────────────────────────────
+      // ── 10. Status hints + scrollback indicator ─────────────────────────
       ctx.font = '9px monospace'; ctx.textAlign = 'right';
       const hints: string[] = [];
       if (rowsRef.current !== DEFAULT_ROWS) hints.push(`${Math.round((DEFAULT_ROWS / rowsRef.current) * 100)}% zoom`);
-      if (panOffsetRef.current !== 0) hints.push('panned · dbl-click to reset');
+      if (panOffsetRef.current !== 0) hints.push('panned');
+
+      const fmtDur = (ms: number) => {
+        if (ms >= 86_400_000) return `${(ms / 86_400_000).toFixed(1)}d`;
+        if (ms >= 3_600_000) return `${(ms / 3_600_000).toFixed(1)}h`;
+        if (ms >= 60_000) return `${(ms / 60_000).toFixed(0)}m`;
+        return `${(ms / 1000).toFixed(0)}s`;
+      };
+
+      if (customDurRef.current) hints.push(`window: ${fmtDur(customDurRef.current)}`);
+
+      if (isScrolledBack) {
+        const offsetStr = fmtDur(timeOffsetRef.current);
+        hints.push(`-${offsetStr} ago`);
+      }
       if (hints.length > 0) { ctx.fillStyle = 'rgba(100,100,140,0.7)'; ctx.fillText(hints.join('  ·  '), LABEL_W + gridW - 4, gridH - 4); }
+
+      if (isScrolledBack) {
+        ctx.fillStyle = 'rgba(255, 60, 60, 0.15)';
+        ctx.fillRect(LABEL_W, 0, gridW, 2);
+        ctx.font = 'bold 10px monospace'; ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(255, 90, 90, 0.8)';
+        ctx.fillText('HISTORY', LABEL_W + 6, 13);
+        ctx.font = '9px monospace';
+        ctx.fillStyle = 'rgba(255, 90, 90, 0.5)';
+        ctx.fillText('dbl-click to go live', LABEL_W + 60, 13);
+      }
     };
 
     draw();
@@ -483,23 +570,29 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center gap-1 mb-1.5 px-0.5">
         {(Object.keys(WINDOWS) as WindowKey[]).map(k => (
-          <button key={k} onClick={() => setWin(k)}
+          <button key={k} onClick={() => { setWin(k); setCustomDuration(null); customDurRef.current = null; }}
             className={cn(
               'px-2.5 py-0.5 text-[11px] font-mono rounded transition-all',
-              win === k
+              win === k && customDuration === null
                 ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/25'
                 : 'text-white/25 hover:text-white/50 border border-transparent'
             )}>
             {k}
           </button>
         ))}
-        {isPanned && (
+        {!isLive && (
+          <button onClick={goLive}
+            className="ml-1 px-2 py-0.5 text-[10px] font-mono rounded bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/25 transition-colors animate-pulse">
+            LIVE
+          </button>
+        )}
+        {(isPanned || !isLive || customDuration !== null) && (
           <button onClick={resetView}
             className="ml-1 px-2 py-0.5 text-[10px] font-mono rounded text-amber-400/60 hover:text-amber-300 border border-amber-900/30 transition-colors">
             ⟲
           </button>
         )}
-        <span className="ml-auto text-[10px] text-white/10 font-mono">drag · scroll · dbl↩</span>
+        <span className="ml-auto text-[10px] text-white/10 font-mono">drag · scroll · ⌃scroll time · ⇧scroll back</span>
       </div>
       <div
         ref={containerRef}

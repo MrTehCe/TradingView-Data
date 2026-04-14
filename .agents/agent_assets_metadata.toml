@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "GjIWE0eShH1_lbYGqPMH_"
+uri = "file://workspace.tar.gz"
+type = "unspecified"
+title = "Futures Monitor - Full Workspace Archive"

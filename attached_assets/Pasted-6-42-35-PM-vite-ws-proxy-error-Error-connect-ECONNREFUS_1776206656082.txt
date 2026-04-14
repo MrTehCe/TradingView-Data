@@ -1,0 +1,52 @@
+6:42:35 PM [vite] ws proxy error:
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+
+> @workspace/api-server@0.0.0 start /home/jchill/futures-monitor/TradingView-Data/artifacts/api-server
+> node --enable-source-maps ./dist/index.mjs
+
+[18:42:36.023] WARN (123304): SQLite not available — running without persistent tick storage (install better-sqlite3 locally)
+    err: {
+      "type": "Error",
+      "message": "Could not locate the bindings file. Tried:\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Debug/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Release/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Debug/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Debug/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Release/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Release/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/default/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/compiled/22.22.0/linux/x64/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/release/install-root/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/debug/install-root/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/default/install-root/better_sqlite3.node\n → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/lib/binding/node-v127-linux-x64/better_sqlite3.node",
+      "stack":
+          Error: Could not locate the bindings file. Tried:
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Debug/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Release/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Debug/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Debug/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Release/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Release/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/default/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/compiled/22.22.0/linux/x64/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/release/install-root/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/debug/install-root/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/default/install-root/better_sqlite3.node
+           → /home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/lib/binding/node-v127-linux-x64/better_sqlite3.node
+              at bindings (/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/bindings@1.5.0/node_modules/bindings/bindings.js:126:9)
+              at new Database (/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/lib/database.js:48:64)
+              at getTickDb (/home/jchill/futures-monitor/TradingView-Data/artifacts/api-server/src/lib/tickDb.ts:53:16)
+              at attachMarketDataWs (/home/jchill/futures-monitor/TradingView-Data/artifacts/api-server/src/lib/marketDataWs.ts:55:18)
+              at <anonymous> (/home/jchill/futures-monitor/TradingView-Data/artifacts/api-server/src/index.ts:23:1)
+              at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+              at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
+              at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+      "tries": [
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Debug/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Debug/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Debug/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/out/Release/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/Release/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/build/default/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/compiled/22.22.0/linux/x64/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/release/install-root/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/debug/install-root/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/addon-build/default/install-root/better_sqlite3.node",
+        "/home/jchill/futures-monitor/TradingView-Data/node_modules/.pnpm/better-sqlite3@12.9.0/node_modules/better-sqlite3/lib/binding/node-v127-linux-x64/better_sqlite3.node"
+      ]
+    }
+[18:42:36.097] INFO (123304): Market data WebSocket server ready at /api/ws
+[18:42:36.100] INFO (123304): Server listening

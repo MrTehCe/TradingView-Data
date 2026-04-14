@@ -2,6 +2,7 @@ import { IncomingMessage, Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { TradingViewFeed, type QuoteData, type TvConnectionStatus, SYMBOL_DISPLAY } from "./tradingview";
 import { logger } from "./logger";
+import { getTickDb } from "./tickDb";
 
 // Default symbols to subscribe on startup
 const DEFAULT_SYMBOLS = [
@@ -51,10 +52,19 @@ export function attachMarketDataWs(server: Server) {
 
   _feed = new TradingViewFeed(DEFAULT_SYMBOLS);
   const feed = _feed;
+  const tickDb = getTickDb();
 
   feed.on("quote", (quote: QuoteData) => {
     snapshot[quote.displaySymbol] = quote;
     broadcast(clients, { type: "quote", data: quote });
+
+    const now = Date.now();
+    if (quote.price !== null) {
+      tickDb.insertTick(quote.displaySymbol, quote.price, quote.volume ?? 0, now);
+    }
+    if (quote.ask !== null && quote.bid !== null && quote.askSize !== null && quote.bidSize !== null) {
+      tickDb.insertOB(quote.displaySymbol, quote.ask, quote.askSize, quote.bid, quote.bidSize, now);
+    }
   });
 
   feed.on("status", (status: TvConnectionStatus) => {

@@ -38,7 +38,7 @@ export interface MarketStatus {
   error?: string;
 }
 
-const MAX_HISTORY_MS   = 12 * 60 * 60 * 1000;
+const MAX_HISTORY_MS   = 7 * 24 * 60 * 60 * 1000;   // 7 days
 const FLUSH_INTERVAL   = 5_000;
 const PRUNE_INTERVAL   = 30 * 60 * 1000;
 
@@ -91,25 +91,62 @@ export function useMarketData() {
   const pendingOBRef       = useRef<Record<string, OBRecord[]>>({});
   const lastReconnectRef   = useRef<number>(0);
 
-  // ── Load history from IndexedDB on mount ──────────────────────────────────
+  // ── Load history from server SQLite (preferred) then IDB fallback ──────────
   useEffect(() => {
     const cutoff = Date.now() - MAX_HISTORY_MS;
-    Promise.all([loadTicks(cutoff), loadOB(cutoff)])
-      .then(([ticks, ob]) => {
-        for (const [sym, arr] of Object.entries(ticks)) {
-          const live   = tickHistoryRef.current[sym] ?? [];
-          const merged = [...arr, ...live];
+
+    // Try server first (persists across browser clears + server restarts)
+    const KNOWN = ['MES','MNQ','MYM','M2K','ES','NQ','YM','RTY','MGC','MCL','MBT','MET'];
+    const serverLoads = KNOWN.map(sym =>
+      fetch(`/api/history/${sym}?since=${cutoff}`)
+        .then(r => r.ok ? r.json() as Promise<{ symbol: string; ticks: TickRecord[]; ob: OBRecord[] }> : null)
+        .catch(() => null)
+    );
+
+    Promise.all(serverLoads).then(results => {
+      let gotServer = false;
+      for (const res of results) {
+        if (!res || (!res.ticks.length && !res.ob.length)) continue;
+        gotServer = true;
+        const sym = res.symbol;
+        const live = tickHistoryRef.current[sym] ?? [];
+        const existingTs = new Set(live.map(t => t.ts));
+        const novel = res.ticks.filter(t => !existingTs.has(t.ts));
+        if (novel.length > 0) {
+          const merged = [...live, ...novel];
           merged.sort((a, b) => a.ts - b.ts);
           tickHistoryRef.current[sym] = merged;
         }
-        for (const [sym, arr] of Object.entries(ob)) {
-          const live   = orderBookRef.current[sym] ?? [];
-          const merged = [...arr, ...live];
+        const liveOB = orderBookRef.current[sym] ?? [];
+        const existingOBTs = new Set(liveOB.map(r => r.ts));
+        const novelOB = res.ob.filter(r => !existingOBTs.has(r.ts));
+        if (novelOB.length > 0) {
+          const merged = [...liveOB, ...novelOB];
           merged.sort((a, b) => a.ts - b.ts);
           orderBookRef.current[sym] = merged;
         }
-      })
-      .catch(err => console.warn('IDB load failed:', err));
+      }
+
+      // Fallback: also load from IDB and merge anything the server didn't have
+      if (!gotServer) {
+        Promise.all([loadTicks(cutoff), loadOB(cutoff)])
+          .then(([ticks, ob]) => {
+            for (const [sym, arr] of Object.entries(ticks)) {
+              const live   = tickHistoryRef.current[sym] ?? [];
+              const merged = [...arr, ...live];
+              merged.sort((a, b) => a.ts - b.ts);
+              tickHistoryRef.current[sym] = merged;
+            }
+            for (const [sym, arr] of Object.entries(ob)) {
+              const live   = orderBookRef.current[sym] ?? [];
+              const merged = [...arr, ...live];
+              merged.sort((a, b) => a.ts - b.ts);
+              orderBookRef.current[sym] = merged;
+            }
+          })
+          .catch(err => console.warn('IDB load failed:', err));
+      }
+    });
   }, []);
 
   // ── Flush pending records to IndexedDB every 5 s ──────────────────────────

@@ -21,7 +21,7 @@ type ToTab =
   | { type: 'history';  symbol: string; ticks: TickRecord[]; ob: OBRecord[] };
 
 // ── Shared state ─────────────────────────────────────────────────────────────
-const MAX_HISTORY_MS = 12 * 60 * 60 * 1000;
+const MAX_HISTORY_MS = 7 * 24 * 60 * 60 * 1000;   // 7 days
 const connectedPorts = new Set<MessagePort>();
 const tickHistory: Record<string, TickRecord[]> = {};
 const obHistory:   Record<string, OBRecord[]>   = {};

@@ -16,6 +16,27 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Artifacts
+
+### futures-monitor (frontend)
+- Vite + React + TailwindCSS, Bookmap-style order flow visualization
+- SharedWorker (`market-data-worker-v3`) manages WS connection to API server
+- IndexedDB for browser-side tick/OB persistence (5s flush interval)
+- On startup, tries server SQLite history first, falls back to IDB
+- History window: 7 days (`MAX_HISTORY_MS`)
+- Time windows: 1m / 3m / 5m / 15m / 30m / 1H / 4H; VWAP anchor 23:00 UTC
+
+### api-server (backend)
+- Express 5, TradingView WebSocket relay for 12 CME symbols
+- Auth: 2FA → `tvAuth.ts` applies token directly via `getFeed().setAuth()`
+- Server-side keepalive pings every 25s
+- SQLite persistence (`better-sqlite3`): ticks + order book stored in `data/ticks.db`
+  - Graceful no-op fallback when native module unavailable (e.g., Replit)
+  - 7-day auto-prune (hourly)
+- REST endpoints:
+  - `GET /api/history/:symbol?since=<epoch_ms>` — returns `{ symbol, ticks, ob }`
+  - `POST /api/auth/tradingview/reconnect` — re-applies saved auth credentials
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages

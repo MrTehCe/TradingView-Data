@@ -1,0 +1,45 @@
+KTOP-F1A4FP8:~/futures-monitor/TradingView-Data/artifacts$ ls
+api-server  futures-monitor  mockup-sandbox
+jchill@DESKTOP-F1A4FP8:~/futures-monitor/TradingView-Data/artifacts$ cd futures-monitor/
+jchill@DESKTOP-F1A4FP8:~/futures-monitor/TradingView-Data/artifacts/futures-monitor$ pnpm run dev &
+[1] 1874
+jchill@DESKTOP-F1A4FP8:~/futures-monitor/TradingView-Data/artifacts/futures-monitor$ 
+> @workspace/futures-monitor@0.0.0 dev /home/jchill/futures-monitor/TradingView-Data/artifacts/futures-monitor
+> vite --config vite.config.ts --host 0.0.0.0
+
+
+  VITE v7.3.1  ready in 734 ms
+
+  ➜  Local:   http://localhost:3000/
+  ➜  Network: http://10.255.255.254:3000/
+  ➜  Network: http://172.27.200.166:3000/
+  ➜  press h + enter to show help
+5:58:09 PM [vite] http proxy error: /api/auth/tradingview/reconnect
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+5:58:12 PM [vite] ws proxy error:
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+5:58:12 PM [vite] http proxy error: /api/auth/tradingview/login
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+5:58:13 PM [vite] http proxy error: /api/auth/tradingview/login
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) (x2)
+5:58:13 PM [vite] http proxy error: /api/auth/tradingview/login
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) (x3)
+5:58:13 PM [vite] http proxy error: /api/auth/tradingview/login
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) (x4)
+5:58:13 PM [vite] http proxy error: /api/auth/tradingview/login
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16) (x5)
+5:58:15 PM [vite] ws proxy error:
+Error: connect ECONNREFUSED 127.0.0.1:8080
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+
+
+
+
+

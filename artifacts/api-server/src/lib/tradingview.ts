@@ -137,8 +137,20 @@ export class TradingViewFeed extends EventEmitter {
 
   connect() {
     if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.terminate();
+      const oldWs = this.ws;
+      this.ws = null as unknown as WebSocket;
+      try {
+        oldWs.removeAllListeners();
+        oldWs.on("error", () => {});
+        if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CLOSING) {
+          oldWs.terminate();
+        } else {
+          oldWs.once("open", () => { try { oldWs.terminate(); } catch {} });
+          oldWs.once("error", () => {});
+        }
+      } catch (err) {
+        logger.warn({ err }, "Error closing old TradingView WS (non-fatal)");
+      }
     }
 
     logger.info({ url: TV_WS_URL }, "Connecting to TradingView");

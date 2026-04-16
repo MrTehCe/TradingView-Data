@@ -8,16 +8,8 @@ import { getTickDb } from "./tickDb";
 const DEFAULT_SYMBOLS = [
   "CME_MINI:MES1!",   // Micro E-mini S&P 500
   "CME_MINI:MNQ1!",   // Micro Nasdaq
-  "CBOT_MINI:MYM1!",  // Micro Dow
-  "CME_MINI:M2K1!",   // Micro Russell 2000
   "CME:ES1!",         // E-mini S&P 500
   "CME:NQ1!",         // E-mini Nasdaq
-  "CBOT:YM1!",        // E-mini Dow Jones
-  "CME:RTY1!",        // E-mini Russell 2000
-  "COMEX:MGC1!",      // Micro Gold
-  "NYMEX:MCL1!",      // Micro Crude Oil
-  "CME:MBT1!",        // Micro Bitcoin
-  "CME:MET1!",        // Micro Ether
 ];
 
 type OutgoingMessage =

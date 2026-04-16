@@ -75,16 +75,8 @@ export interface TvConnectionStatus {
 export const SYMBOL_DISPLAY: Record<string, string> = {
   "CME_MINI:MES1!":  "MES",
   "CME_MINI:MNQ1!":  "MNQ",
-  "CBOT_MINI:MYM1!": "MYM",
-  "CME_MINI:M2K1!":  "M2K",
   "CME:ES1!":        "ES",
   "CME:NQ1!":        "NQ",
-  "CBOT:YM1!":       "YM",
-  "CME:RTY1!":       "RTY",
-  "COMEX:MGC1!":     "MGC",
-  "NYMEX:MCL1!":     "MCL",
-  "CME:MBT1!":       "MBT",
-  "CME:MET1!":       "MET",
 };
 
 const TV_WS_URL =

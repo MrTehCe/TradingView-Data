@@ -14,16 +14,8 @@ export interface SymbolInfo {
 export const KNOWN_SYMBOLS: SymbolInfo[] = [
   { display: 'MES',  tv: 'CME_MINI:MES1!',  bucket: 0.5,   pointValue: 5,   desc: 'Micro E-mini S&P 500',  group: 'equity'  },
   { display: 'MNQ',  tv: 'CME_MINI:MNQ1!',  bucket: 2.0,   pointValue: 2,   desc: 'Micro Nasdaq-100',      group: 'equity'  },
-  { display: 'MYM',  tv: 'CBOT_MINI:MYM1!', bucket: 1.0,   pointValue: 0.5, desc: 'Micro Dow Jones',       group: 'equity'  },
-  { display: 'M2K',  tv: 'CME_MINI:M2K1!',  bucket: 0.1,   pointValue: 5,   desc: 'Micro Russell 2000',    group: 'equity'  },
   { display: 'ES',   tv: 'CME:ES1!',         bucket: 0.25,  pointValue: 50,  desc: 'E-mini S&P 500',        group: 'equity'  },
   { display: 'NQ',   tv: 'CME:NQ1!',         bucket: 0.25,  pointValue: 20,  desc: 'E-mini Nasdaq-100',     group: 'equity'  },
-  { display: 'YM',   tv: 'CBOT:YM1!',        bucket: 1.0,   pointValue: 5,   desc: 'E-mini Dow Jones',      group: 'equity'  },
-  { display: 'RTY',  tv: 'CME:RTY1!',        bucket: 0.1,   pointValue: 50,  desc: 'E-mini Russell 2000',   group: 'equity'  },
-  { display: 'MGC',  tv: 'COMEX:MGC1!',      bucket: 0.1,   pointValue: 10,  desc: 'Micro Gold',            group: 'metals'  },
-  { display: 'MCL',  tv: 'NYMEX:MCL1!',      bucket: 0.01,  pointValue: 10,  desc: 'Micro Crude Oil',       group: 'energy'  },
-  { display: 'MBT',  tv: 'CME:MBT1!',        bucket: 5.0,   pointValue: 5,   desc: 'Micro Bitcoin',         group: 'crypto'  },
-  { display: 'MET',  tv: 'CME:MET1!',        bucket: 0.05,  pointValue: 25,  desc: 'Micro Ether',           group: 'crypto'  },
 ];
 
 const GROUP_COLOR: Record<string, string> = {

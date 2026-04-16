@@ -96,7 +96,7 @@ export function useMarketData() {
     const cutoff = Date.now() - MAX_HISTORY_MS;
 
     // Try server first (persists across browser clears + server restarts)
-    const KNOWN = ['MES','MNQ','MYM','M2K','ES','NQ','YM','RTY','MGC','MCL','MBT','MET'];
+    const KNOWN = ['MES','MNQ','ES','NQ'];
     const serverLoads = KNOWN.map(sym =>
       fetch(`/api/history/${sym}?since=${cutoff}`)
         .then(r => r.ok ? r.json() as Promise<{ symbol: string; ticks: TickRecord[]; ob: OBRecord[] }> : null)

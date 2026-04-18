@@ -566,6 +566,64 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
     return () => clearInterval(id);
   }, [symbol, bucketSize, tickHistoryRef, orderBookRef]);
 
+  // ── Scrub bar handlers ───────────────────────────────────────────────────
+  const SCRUB_RANGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const scrubTrackRef = useRef<HTMLDivElement>(null);
+
+  const jumpBack = useCallback((ms: number) => {
+    const next = Math.max(0, Math.min(SCRUB_RANGE_MS, ms));
+    setTimeOffset(next);
+    timeOffsetRef.current = next;
+  }, [SCRUB_RANGE_MS]);
+
+  const onScrubMouseDown = useCallback((e: React.MouseEvent) => {
+    const track = scrubTrackRef.current; if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const setFromClientX = (clientX: number) => {
+      const ratio = 1 - Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      jumpBack(ratio * SCRUB_RANGE_MS);
+    };
+    setFromClientX(e.clientX);
+    const onMove = (ev: MouseEvent) => setFromClientX(ev.clientX);
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [jumpBack, SCRUB_RANGE_MS]);
+
+  // Datetime picker — convert local datetime input → offset from now
+  const onPickDateTime = useCallback((isoLocal: string) => {
+    if (!isoLocal) return;
+    const picked = new Date(isoLocal).getTime();
+    if (isNaN(picked)) return;
+    const offset = Math.max(0, Date.now() - picked);
+    jumpBack(Math.min(SCRUB_RANGE_MS, offset));
+  }, [jumpBack, SCRUB_RANGE_MS]);
+
+  // Format the current "viewing" timestamp for the picker value
+  const viewingDate = new Date(Date.now() - timeOffsetMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const pickerValue = `${viewingDate.getFullYear()}-${pad(viewingDate.getMonth() + 1)}-${pad(viewingDate.getDate())}T${pad(viewingDate.getHours())}:${pad(viewingDate.getMinutes())}`;
+  const minPickerValue = (() => {
+    const d = new Date(Date.now() - SCRUB_RANGE_MS);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })();
+  const maxPickerValue = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  })();
+
+  const cursorPct = 100 - (timeOffsetMs / SCRUB_RANGE_MS) * 100;
+
+  // Day-boundary tick marks (every 24h, last 7)
+  const dayMarks: { pct: number; label: string }[] = [];
+  for (let d = 0; d <= 7; d++) {
+    const pct = 100 - (d * 24 * 60 * 60 * 1000 / SCRUB_RANGE_MS) * 100;
+    dayMarks.push({ pct, label: d === 0 ? 'NOW' : `-${d}d` });
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="flex items-center gap-1 mb-1.5 px-0.5">
@@ -600,6 +658,87 @@ export function PriceHeatmap({ symbol, currentPrice, bucketSize, tickHistoryRef,
         style={{ cursor }}
       >
         <canvas ref={canvasRef} className="w-full h-full block" style={{ userSelect: 'none' }} />
+      </div>
+
+      {/* ── Time scrub bar ──────────────────────────────────────────────── */}
+      <div className="mt-1.5 flex items-center gap-2 px-0.5">
+        {/* Quick-jump buttons */}
+        <div className="flex items-center gap-0.5 shrink-0">
+          {[
+            { label: 'NOW',  ms: 0 },
+            { label: '-1H',  ms: 3_600_000 },
+            { label: '-4H',  ms: 14_400_000 },
+            { label: '-8H',  ms: 28_800_000 },
+            { label: '-1D',  ms: 86_400_000 },
+            { label: '-3D',  ms: 3 * 86_400_000 },
+          ].map(b => {
+            const isActive = Math.abs(timeOffsetMs - b.ms) < 60_000;
+            return (
+              <button
+                key={b.label}
+                onClick={() => jumpBack(b.ms)}
+                className={cn(
+                  'px-1.5 py-0.5 text-[10px] font-mono rounded border transition-colors',
+                  isActive
+                    ? b.ms === 0
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      : 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                    : 'text-white/30 hover:text-white/70 border-white/5 hover:border-white/15',
+                )}
+              >
+                {b.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Scrubber track */}
+        <div
+          ref={scrubTrackRef}
+          onMouseDown={onScrubMouseDown}
+          className="relative flex-1 h-5 bg-[#0a0a14] border border-[#141420] rounded cursor-pointer select-none"
+          title="Click or drag to scrub through the last 7 days"
+        >
+          {/* Day grid marks */}
+          {dayMarks.map((m, i) => (
+            <div key={i} className="absolute top-0 bottom-0 w-px bg-white/[0.06]"
+                 style={{ left: `${m.pct}%` }} />
+          ))}
+          {dayMarks.map((m, i) => (
+            <span key={`l${i}`}
+              className="absolute top-1/2 -translate-y-1/2 text-[8px] font-mono text-white/20 px-0.5 pointer-events-none"
+              style={{ left: `${m.pct}%`, transform: `translate(${i === 0 ? '-100%' : '-50%'}, -50%)` }}>
+              {m.label}
+            </span>
+          ))}
+          {/* Cursor */}
+          <div
+            className={cn(
+              'absolute top-0 bottom-0 w-0.5 pointer-events-none',
+              isLive ? 'bg-emerald-400' : 'bg-cyan-400',
+            )}
+            style={{ left: `calc(${cursorPct}% - 1px)`, boxShadow: '0 0 6px currentColor' }}
+          />
+          {/* Cursor handle */}
+          <div
+            className={cn(
+              'absolute top-1/2 -translate-y-1/2 w-2 h-3 rounded-sm pointer-events-none',
+              isLive ? 'bg-emerald-400' : 'bg-cyan-400',
+            )}
+            style={{ left: `calc(${cursorPct}% - 4px)` }}
+          />
+        </div>
+
+        {/* Datetime picker */}
+        <input
+          type="datetime-local"
+          value={pickerValue}
+          min={minPickerValue}
+          max={maxPickerValue}
+          onChange={(e) => onPickDateTime(e.target.value)}
+          className="shrink-0 bg-[#0a0a14] border border-[#141420] hover:border-white/15 text-[10px] font-mono text-white/70 px-1.5 py-0.5 rounded outline-none focus:border-cyan-500/40 [color-scheme:dark]"
+          title="Jump to specific date & time"
+        />
       </div>
     </div>
   );

@@ -58,8 +58,12 @@ export function TradingPanel({ trading, active, quote, quotes }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef  = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
-  useEffect(() => { localStorage.setItem(VISIBLE_KEY, JSON.stringify(visible)); }, [visible]);
-  useEffect(() => { localStorage.setItem(POSITION_KEY, JSON.stringify(pos)); }, [pos]);
+  useEffect(() => {
+    try { localStorage.setItem(VISIBLE_KEY, JSON.stringify(visible)); } catch { /* quota or disabled */ }
+  }, [visible]);
+  useEffect(() => {
+    try { localStorage.setItem(POSITION_KEY, JSON.stringify(pos)); } catch { /* quota or disabled */ }
+  }, [pos]);
 
   // Re-clamp when the window resizes so the panel never disappears off-screen
   useEffect(() => {

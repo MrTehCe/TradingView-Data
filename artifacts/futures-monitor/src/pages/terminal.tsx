@@ -1,8 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useMarketData } from '@/hooks/use-market-data';
+import { usePaperTrading } from '@/hooks/use-paper-trading';
 import { ContractPanel }  from '@/components/contract-panel';
 import { PriceHeatmap }   from '@/components/price-heatmap';
 import { SettingsPanel }  from '@/components/settings-panel';
+import { TradingPanel }   from '@/components/trading-panel';
 import { SymbolSelector, KNOWN_SYMBOLS, type SymbolInfo } from '@/components/symbol-selector';
 import { cn } from '@/lib/utils';
 
@@ -18,6 +20,7 @@ const GROUP_DOT: Record<string, string> = {
 export default function TerminalPage() {
   const { quotes, status, sendToken, clearToken, subscribeSymbol, tickHistoryRef, orderBookRef } = useMarketData();
   const [active, setActive] = useState<SymbolInfo>(DEFAULT_SYMBOL);
+  const trading = usePaperTrading(quotes);
 
   useEffect(() => {
     document.documentElement.classList.add('dark');
@@ -83,6 +86,11 @@ export default function TerminalPage() {
             </button>
           );
         })}
+      </div>
+
+      {/* Paper trading panel */}
+      <div className="mb-2 shrink-0">
+        <TradingPanel trading={trading} active={active} quote={activeData} quotes={quotes} />
       </div>
 
       {/* Chart */}

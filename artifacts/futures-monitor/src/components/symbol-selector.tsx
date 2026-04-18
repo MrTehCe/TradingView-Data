@@ -7,15 +7,16 @@ export interface SymbolInfo {
   tv: string;
   bucket: number;
   pointValue: number;
+  tickSize: number;       // minimum price increment
   desc: string;
   group: 'equity' | 'metals' | 'energy' | 'crypto';
 }
 
 export const KNOWN_SYMBOLS: SymbolInfo[] = [
-  { display: 'MES',  tv: 'CME_MINI:MES1!',  bucket: 0.5,   pointValue: 5,   desc: 'Micro E-mini S&P 500',  group: 'equity'  },
-  { display: 'MNQ',  tv: 'CME_MINI:MNQ1!',  bucket: 2.0,   pointValue: 2,   desc: 'Micro Nasdaq-100',      group: 'equity'  },
-  { display: 'ES',   tv: 'CME:ES1!',         bucket: 0.25,  pointValue: 50,  desc: 'E-mini S&P 500',        group: 'equity'  },
-  { display: 'NQ',   tv: 'CME:NQ1!',         bucket: 0.25,  pointValue: 20,  desc: 'E-mini Nasdaq-100',     group: 'equity'  },
+  { display: 'MES',  tv: 'CME_MINI:MES1!',  bucket: 0.5,   pointValue: 5,   tickSize: 0.25, desc: 'Micro E-mini S&P 500',  group: 'equity'  },
+  { display: 'MNQ',  tv: 'CME_MINI:MNQ1!',  bucket: 2.0,   pointValue: 2,   tickSize: 0.25, desc: 'Micro Nasdaq-100',      group: 'equity'  },
+  { display: 'ES',   tv: 'CME:ES1!',         bucket: 0.25,  pointValue: 50,  tickSize: 0.25, desc: 'E-mini S&P 500',        group: 'equity'  },
+  { display: 'NQ',   tv: 'CME:NQ1!',         bucket: 0.25,  pointValue: 20,  tickSize: 0.25, desc: 'E-mini Nasdaq-100',     group: 'equity'  },
 ];
 
 const GROUP_COLOR: Record<string, string> = {

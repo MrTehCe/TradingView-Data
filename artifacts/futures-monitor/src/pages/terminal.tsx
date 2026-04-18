@@ -88,11 +88,6 @@ export default function TerminalPage() {
         })}
       </div>
 
-      {/* Paper trading panel */}
-      <div className="mb-2 shrink-0">
-        <TradingPanel trading={trading} active={active} quote={activeData} quotes={quotes} />
-      </div>
-
       {/* Chart */}
       <div className="flex-1 flex flex-col gap-2 min-h-0">
         <ContractPanel symbol={active.display} data={activeData} />
@@ -110,6 +105,9 @@ export default function TerminalPage() {
           Click the settings icon to log in and start streaming live data.
         </p>
       )}
+
+      {/* Floating paper trading window */}
+      <TradingPanel trading={trading} active={active} quote={activeData} quotes={quotes} />
     </div>
   );
 }

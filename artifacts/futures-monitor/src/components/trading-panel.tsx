@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { ChevronDown, ChevronUp, X, RotateCcw, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, X, RotateCcw, AlertTriangle, GripVertical, Eye, EyeOff } from 'lucide-react';
 import { ALL_PRESETS, pointValueFor } from '@/hooks/use-paper-trading';
 import type { usePaperTrading } from '@/hooks/use-paper-trading';
 import type { QuoteData } from '@/hooks/use-market-data';
@@ -13,6 +13,25 @@ interface Props {
   active: SymbolInfo;
   quote: QuoteData | undefined;
   quotes: Record<string, QuoteData>;
+}
+
+const POSITION_KEY = 'fm_trade_panel_pos_v1';
+const VISIBLE_KEY  = 'fm_trade_panel_visible_v1';
+
+interface PanelPos { x: number; y: number }
+
+function loadPos(): PanelPos {
+  try {
+    const raw = localStorage.getItem(POSITION_KEY);
+    if (raw) return JSON.parse(raw) as PanelPos;
+  } catch { /* ignore */ }
+  return { x: window.innerWidth - 760, y: 70 };
+}
+
+function clampToViewport(p: PanelPos, w: number, h: number): PanelPos {
+  const maxX = Math.max(0, window.innerWidth - w - 4);
+  const maxY = Math.max(0, window.innerHeight - 40);
+  return { x: Math.max(4, Math.min(p.x, maxX)), y: Math.max(4, Math.min(p.y, maxY)) };
 }
 
 const fmtMoney = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -29,6 +48,50 @@ export function TradingPanel({ trading, active, quote, quotes }: Props) {
   const [tpTicks, setTpTicks]       = useState(8);
   const [slTicks, setSlTicks]       = useState(6);
   const [showLog, setShowLog]       = useState(false);
+
+  // ── Floating window state ────────────────────────────────────────────────
+  const [visible, setVisible] = useState<boolean>(() => {
+    try { return JSON.parse(localStorage.getItem(VISIBLE_KEY) ?? 'true'); }
+    catch { return true; }
+  });
+  const [pos, setPos] = useState<PanelPos>(() => loadPos());
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragRef  = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  useEffect(() => { localStorage.setItem(VISIBLE_KEY, JSON.stringify(visible)); }, [visible]);
+  useEffect(() => { localStorage.setItem(POSITION_KEY, JSON.stringify(pos)); }, [pos]);
+
+  // Re-clamp when the window resizes so the panel never disappears off-screen
+  useEffect(() => {
+    const onResize = () => {
+      const el = panelRef.current;
+      if (!el) return;
+      setPos(p => clampToViewport(p, el.offsetWidth, el.offsetHeight));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    // Only start drag when clicking the drag handle area, not buttons/inputs
+    if ((e.target as HTMLElement).closest('button, input, select')) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+
+    const onMove = (ev: MouseEvent) => {
+      const d = dragRef.current; if (!d) return;
+      const next = { x: d.origX + (ev.clientX - d.startX), y: d.origY + (ev.clientY - d.startY) };
+      const el = panelRef.current;
+      setPos(el ? clampToViewport(next, el.offsetWidth, el.offsetHeight) : next);
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [pos.x, pos.y]);
 
   const bid = quote?.bid ?? null;
   const ask = quote?.ask ?? null;
@@ -63,10 +126,36 @@ export function TradingPanel({ trading, active, quote, quotes }: Props) {
       atm: { enabled: atmEnabled, tpTicks, slTicks } });
   }
 
+  // Hidden — show only the floating restore button
+  if (!visible) {
+    return (
+      <button
+        onClick={() => setVisible(true)}
+        className="fixed z-40 flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#08081a]/95 backdrop-blur border border-white/15 hover:border-cyan-500/50 hover:bg-[#10101e] text-white/60 hover:text-white text-[10px] font-mono font-bold tracking-wider shadow-lg transition-colors"
+        style={{ left: pos.x, top: pos.y }}
+        title="Show paper trading panel"
+      >
+        <Eye className="w-3 h-3" />
+        TRADE
+        <span className={cn('ml-1', (realized + unrealizedTotal) >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+          {fmtMoney(realized + unrealizedTotal)}
+        </span>
+      </button>
+    );
+  }
+
   return (
-    <div className="bg-[#08081a]/95 backdrop-blur border border-white/10 rounded-md text-white shadow-lg">
-      {/* Header strip */}
-      <div className="flex items-center gap-3 px-2.5 py-1.5 border-b border-white/5">
+    <div
+      ref={panelRef}
+      className="fixed z-40 bg-[#08081a]/95 backdrop-blur border border-white/15 rounded-md text-white shadow-2xl"
+      style={{ left: pos.x, top: pos.y, width: collapsed ? 'auto' : 720, maxWidth: 'calc(100vw - 8px)' }}
+    >
+      {/* Header strip — drag handle */}
+      <div
+        onMouseDown={onDragStart}
+        className="flex items-center gap-3 px-2.5 py-1.5 border-b border-white/5 cursor-move select-none"
+      >
+        <GripVertical className="w-3 h-3 text-white/25 shrink-0" />
         <span className="text-[10px] font-bold tracking-[0.2em] text-white/40 font-mono uppercase">Paper Trade</span>
 
         {/* Account preset selector */}
@@ -114,8 +203,11 @@ export function TradingPanel({ trading, active, quote, quotes }: Props) {
           >
             <RotateCcw className="w-3.5 h-3.5" />
           </button>
-          <button onClick={() => setCollapsed(c => !c)} className="text-white/30 hover:text-white/70 p-1">
+          <button onClick={() => setCollapsed(c => !c)} className="text-white/30 hover:text-white/70 p-1" title={collapsed ? 'Expand' : 'Collapse'}>
             {collapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+          </button>
+          <button onClick={() => setVisible(false)} className="text-white/30 hover:text-rose-400 p-1" title="Hide panel (use TRADE button to restore)">
+            <EyeOff className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>

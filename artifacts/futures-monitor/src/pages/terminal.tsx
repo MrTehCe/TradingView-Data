@@ -55,16 +55,48 @@ export default function TerminalPage() {
             }}
             data-testid="brand-brokie-maps"
           >
-            <span style={{ display: 'inline-block', transform: 'skewX(-6deg) translateY(-1px)' }}>BR</span>
-            <span style={{ display: 'inline-block', transform: 'translateY(1px)', opacity: 0.92 }}>O</span>
+            {/* B — top-right corner chipped off, with a shard floating above */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'skewX(-6deg) translateY(-1px)' }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(0 0, 70% 0, 100% 30%, 100% 100%, 0 100%)' }}>B</span>
+              <span style={{ position: 'absolute', top: '-6px', right: '-3px', fontSize: '0.45em', opacity: 0.7, transform: 'rotate(28deg)', color: 'rgba(52,211,153,0.9)' }}>◢</span>
+            </span>
+            <span style={{ display: 'inline-block', transform: 'skewX(-6deg) translateY(-1px)' }}>R</span>
+
+            {/* O — sliced horizontally, lower half nudged down */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'translateY(1px)', opacity: 0.92 }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(0 0, 100% 0, 100% 45%, 0 55%)' }}>O</span>
+              <span style={{ position: 'absolute', inset: 0, display: 'inline-block', clipPath: 'polygon(0 60%, 100% 50%, 100% 100%, 0 100%)', transform: 'translate(2px, 3px)' }}>O</span>
+            </span>
+
             <span style={{ display: 'inline-block', transform: 'skewX(4deg)' }}>K</span>
-            <span style={{ display: 'inline-block', transform: 'translateY(-2px) rotate(-3deg)' }}>I</span>
+
+            {/* I — bottom snapped off */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'translateY(-2px) rotate(-3deg)' }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(0 0, 100% 0, 100% 70%, 0 60%)' }}>I</span>
+              <span style={{ position: 'absolute', bottom: '-5px', left: '1px', fontSize: '0.5em', opacity: 0.65, transform: 'rotate(-18deg)', color: 'rgba(168,85,247,0.85)' }}>▍</span>
+            </span>
+
             <span style={{ display: 'inline-block', transform: 'translateY(1px)' }}>E</span>
             <span style={{ display: 'inline-block', width: '0.5em' }} />
-            <span style={{ display: 'inline-block', transform: 'translateY(1px) skewX(3deg)' }}>M</span>
+
+            {/* M — left leg broken off */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'translateY(1px) skewX(3deg)' }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(15% 0, 100% 0, 100% 100%, 25% 100%, 10% 60%)' }}>M</span>
+              <span style={{ position: 'absolute', bottom: '-4px', left: '-4px', fontSize: '0.4em', opacity: 0.7, transform: 'rotate(35deg)', color: 'rgba(52,211,153,0.85)' }}>◣</span>
+            </span>
+
             <span style={{ display: 'inline-block', transform: 'translateY(-1px)' }}>A</span>
-            <span style={{ display: 'inline-block', transform: 'rotate(2deg)', opacity: 0.92 }}>P</span>
-            <span style={{ display: 'inline-block', transform: 'skewX(-5deg) translateY(1px)' }}>S</span>
+
+            {/* P — top of bowl chipped */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'rotate(2deg)', opacity: 0.92 }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(0 0, 60% 0, 85% 15%, 100% 35%, 100% 100%, 0 100%)' }}>P</span>
+            </span>
+
+            {/* S — middle bar fractured, slight offset between halves */}
+            <span style={{ position: 'relative', display: 'inline-block', transform: 'skewX(-5deg) translateY(1px)' }}>
+              <span style={{ display: 'inline-block', clipPath: 'polygon(0 0, 100% 0, 100% 48%, 0 52%)' }}>S</span>
+              <span style={{ position: 'absolute', inset: 0, display: 'inline-block', clipPath: 'polygon(0 56%, 100% 52%, 100% 100%, 0 100%)', transform: 'translate(-2px, 2px)' }}>S</span>
+            </span>
             <span
               aria-hidden
               className="absolute inset-0 pointer-events-none"

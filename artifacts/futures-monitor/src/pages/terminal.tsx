@@ -44,7 +44,37 @@ export default function TerminalPage() {
       {/* Header */}
       <header className="flex justify-between items-center mb-2 shrink-0 gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="text-[11px] font-bold tracking-[0.25em] text-white/25 font-mono uppercase shrink-0">Futures</span>
+          <span
+            className="relative text-[13px] font-black tracking-[0.35em] font-mono uppercase shrink-0 select-none"
+            style={{
+              color: '#e6faff',
+              textShadow:
+                '1.5px 0 0 rgba(255,0,128,0.85), -1.5px 0 0 rgba(0,255,234,0.85), 0 0 8px rgba(0,255,234,0.35)',
+              WebkitTextStroke: '0.4px rgba(255,255,255,0.15)',
+              filter: 'drop-shadow(0 0 6px rgba(0,255,234,0.25))',
+            }}
+            data-testid="brand-brokie-maps"
+          >
+            <span style={{ display: 'inline-block', transform: 'skewX(-6deg) translateY(-1px)' }}>BR</span>
+            <span style={{ display: 'inline-block', transform: 'translateY(1px)', opacity: 0.92 }}>O</span>
+            <span style={{ display: 'inline-block', transform: 'skewX(4deg)' }}>K</span>
+            <span style={{ display: 'inline-block', transform: 'translateY(-2px) rotate(-3deg)' }}>I</span>
+            <span style={{ display: 'inline-block', transform: 'translateY(1px)' }}>E</span>
+            <span style={{ display: 'inline-block', width: '0.5em' }} />
+            <span style={{ display: 'inline-block', transform: 'translateY(1px) skewX(3deg)' }}>M</span>
+            <span style={{ display: 'inline-block', transform: 'translateY(-1px)' }}>A</span>
+            <span style={{ display: 'inline-block', transform: 'rotate(2deg)', opacity: 0.92 }}>P</span>
+            <span style={{ display: 'inline-block', transform: 'skewX(-5deg) translateY(1px)' }}>S</span>
+            <span
+              aria-hidden
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background:
+                  'repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px)',
+                mixBlendMode: 'overlay',
+              }}
+            />
+          </span>
           <span className="h-3 w-px bg-white/10 shrink-0" />
           <SymbolSelector active={active} onSelect={handleSelect} quotes={quoteMap} />
         </div>

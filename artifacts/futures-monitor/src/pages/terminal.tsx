@@ -47,11 +47,11 @@ export default function TerminalPage() {
           <span
             className="relative text-[13px] font-black tracking-[0.35em] font-mono uppercase shrink-0 select-none"
             style={{
-              color: '#e6faff',
+              color: '#f3eaff',
               textShadow:
-                '1.5px 0 0 rgba(255,0,128,0.85), -1.5px 0 0 rgba(0,255,234,0.85), 0 0 8px rgba(0,255,234,0.35)',
+                '1.5px 0 0 rgba(168,85,247,0.9), -1.5px 0 0 rgba(52,211,153,0.9), 0 0 8px rgba(52,211,153,0.35)',
               WebkitTextStroke: '0.4px rgba(255,255,255,0.15)',
-              filter: 'drop-shadow(0 0 6px rgba(0,255,234,0.25))',
+              filter: 'drop-shadow(0 0 6px rgba(168,85,247,0.3))',
             }}
             data-testid="brand-brokie-maps"
           >
